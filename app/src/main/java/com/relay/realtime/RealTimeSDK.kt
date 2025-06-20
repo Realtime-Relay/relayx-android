@@ -1,4 +1,4 @@
-package com.angistudio.nata_sdk
+package com.relay.realtime
 
 import io.nats.client.Connection
 import io.nats.client.Nats

@@ -8,11 +8,11 @@ plugins {
 }
 
 android {
-    namespace = "com.angistudio.nata_sdk"
+    namespace = "com.relay.realtime"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.angistudio.nata_sdk"
+        applicationId = "com.relay.realtime"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
@@ -50,5 +50,19 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     implementation("io.nats:jnats:2.17.4")
+
+    // WebSocket support
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Optional: Coroutines (recommended for async flow)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // JSON parsing (org.json is available by default)
+    // Optional: Moshi or Gson
+    // implementation("com.squareup.moshi:moshi:1.15.0")
+    // implementation("com.google.code.gson:gson:2.10.1")
+
+    // Logging (optional)
+    implementation("com.jakewharton.timber:timber:5.0.1")
 
 }

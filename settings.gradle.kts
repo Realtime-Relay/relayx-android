@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Nata-SDK"
+rootProject.name = "RealTime"
 include(":app")

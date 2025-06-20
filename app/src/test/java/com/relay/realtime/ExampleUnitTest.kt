@@ -1,4 +1,4 @@
-package com.angistudio.nata_sdk
+package com.relay.realtime
 
 import org.junit.Test
 
