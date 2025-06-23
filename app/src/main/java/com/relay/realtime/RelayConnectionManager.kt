@@ -7,54 +7,55 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import org.json.JSONObject
 
 class RelayConnectionManager(private val auth: RelayAuth) {
 
     private var webSocket: WebSocket? = null
-    private var client = OkHttpClient()
+    private val client = OkHttpClient()
     private var isManualDisconnect = false
 
     fun connect() {
         isManualDisconnect = false
+
         val request = Request.Builder()
-            .url("wss://api.relay-x.io") // your backend URL
+            .url("wss://api.relay-x.io") // ✅ Updated to your backend
             .addHeader("Authorization", "Bearer ${auth.jwt}")
             .addHeader("X-Secret", auth.secretKey)
             .build()
 
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
+        client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) {
-                println("Connected")
+                println("✅ Connected to Relay backend")
+                webSocket = ws
+            }
+
+            override fun onMessage(ws: WebSocket, text: String) {
+                val json = JSONObject(text)
+                RelaySDK.onMessage(json)
             }
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                println("Connection failed: ${t.message}")
-                if (!isManualDisconnect) {
-                    reconnect()
-                }
+                println("❌ Connection failed: ${t.message}")
+                if (!isManualDisconnect) reconnect()
             }
 
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
-                println("Closed: $reason")
+                println("🔌 Disconnected: $reason")
             }
         })
-    }
-
-    fun disconnect(manual: Boolean = true) {
-        isManualDisconnect = manual
-        webSocket?.close(1000, "Client disconnect")
-    }
-
-    fun reconnect() {
-        disconnect(false)
-        Handler(Looper.getMainLooper()).postDelayed({
-            connect()
-        }, 3000)
     }
 
     fun send(message: String) {
         webSocket?.send(message)
     }
 
-    fun getWebSocket(): WebSocket? = webSocket
+    fun disconnect(manual: Boolean) {
+        isManualDisconnect = manual
+        webSocket?.close(1000, "Manual disconnect")
+    }
+
+    fun reconnect() {
+        Handler(Looper.getMainLooper()).postDelayed({ connect() }, 3000)
+    }
 }

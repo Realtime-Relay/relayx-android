@@ -1,6 +1,7 @@
 package com.relay.realtime
 
 import com.relay.realtime.models.Message
+import org.json.JSONObject
 
 object RelaySDK {
 
@@ -26,9 +27,12 @@ object RelaySDK {
     fun subscribe(topic: String, listener: (Message) -> Unit): String =
         subscriber.subscribe(topic, listener)
 
-    fun unsubscribe(subscriptionId: String) =
-        subscriber.unsubscribe(subscriptionId)
+    fun unsubscribe(subscriptionId: String) = subscriber.unsubscribe(subscriptionId)
 
     fun getHistory(topic: String, start: Long, end: Long? = null): List<Message> =
         historyManager.getHistory(topic, start, end)
+
+    fun onMessage(json: JSONObject) {
+        subscriber.onMessageReceived(json)
+    }
 }

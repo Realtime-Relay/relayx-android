@@ -7,7 +7,7 @@ import java.util.UUID
 class Subscriber(private val connectionManager: RelayConnectionManager) {
 
     private val listeners = mutableMapOf<String, (Message) -> Unit>()
-    private val subscriptions = mutableMapOf<String, String>() // subId -> topic
+    private val subscriptions = mutableMapOf<String, String>() // id -> topic
 
     fun subscribe(topic: String, listener: (Message) -> Unit): String {
         val subId = UUID.randomUUID().toString()
@@ -18,8 +18,8 @@ class Subscriber(private val connectionManager: RelayConnectionManager) {
             .put("type", "subscribe")
             .put("topic", topic)
             .put("subscriptionId", subId)
-        connectionManager.send(payload.toString())
 
+        connectionManager.send(payload.toString())
         return subId
     }
 
@@ -29,6 +29,7 @@ class Subscriber(private val connectionManager: RelayConnectionManager) {
             .put("type", "unsubscribe")
             .put("topic", topic)
             .put("subscriptionId", subscriptionId)
+
         connectionManager.send(payload.toString())
 
         listeners.remove(subscriptionId)
@@ -36,9 +37,10 @@ class Subscriber(private val connectionManager: RelayConnectionManager) {
     }
 
     fun onMessageReceived(json: JSONObject) {
-        val subId = json.getString("subscriptionId")
-        val topic = json.getString("topic")
-        val message = json.getString("message")
+        val subId = json.optString("subscriptionId")
+        val topic = json.optString("topic")
+        val message = json.optString("message")
+
         listeners[subId]?.invoke(Message(topic, message))
     }
 }

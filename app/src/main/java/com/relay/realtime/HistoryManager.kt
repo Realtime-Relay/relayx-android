@@ -12,9 +12,9 @@ class HistoryManager(private val connectionManager: RelayConnectionManager) {
             .put("start", start)
         end?.let { payload.put("end", it) }
 
-        // You might need a mechanism to block/wait and parse response if backend is async.
         connectionManager.send(payload.toString())
 
-        return emptyList() // Placeholder for actual parsed response
+        // You’ll need to handle history responses if backend sends them async
+        return emptyList()
     }
 }
