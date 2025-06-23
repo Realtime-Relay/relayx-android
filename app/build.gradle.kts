@@ -49,18 +49,13 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
-    implementation("io.nats:jnats:2.17.4")
+    implementation("io.nats:jnats:2.17.6")
 
     // WebSocket support
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Optional: Coroutines (recommended for async flow)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-
-    // JSON parsing (org.json is available by default)
-    // Optional: Moshi or Gson
-    // implementation("com.squareup.moshi:moshi:1.15.0")
-    // implementation("com.google.code.gson:gson:2.10.1")
 
     // Logging (optional)
     implementation("com.jakewharton.timber:timber:5.0.1")
