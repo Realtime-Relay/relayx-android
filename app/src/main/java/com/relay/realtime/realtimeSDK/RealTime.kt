@@ -1,132 +1,249 @@
 package com.relay.realtime.realtimeSDK
 
+import android.util.Log
 import io.nats.client.*
 import io.nats.client.api.*
-import com.google.gson.Gson
 import io.nats.client.impl.NatsMessage
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.nio.charset.StandardCharsets
+import java.time.Duration
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneOffset
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
-import java.time.Instant
+import java.util.concurrent.CopyOnWriteArraySet
+import java.util.concurrent.atomic.AtomicBoolean
 
-class Realtime(private val serverUrl: String) {
-
-    private var connection: Connection? = null
-    private var jetStream: JetStream? = null
-    private val gson = Gson()
-
-    private val reservedTopics = setOf(
-        "CONNECTED", "RECONNECT", "MESSAGE_RESEND", "DISCONNECTED",
-        "RECONNECTING", "RECONNECTED", "RECONN_FAIL"
-    )
-
-    private val listeners = ConcurrentHashMap<String, Dispatcher>()
-    private val messageQueue = mutableListOf<Pair<String, Any>>() // Offline queue
-
-    private val clientId: String = UUID.randomUUID().toString()
-
+class Realtime(private val apiKey: String, private val secretKey: String) {
 
     init {
-        connect()
+        require(apiKey.isNotBlank()) { "apiKey must not be empty" }
+        require(secretKey.isNotBlank()) { "secretKey must not be empty" }
     }
 
-    private fun connect() {
-        val opts = Options.Builder()
-            .server(serverUrl)
-            .connectionListener { _, eventType ->
-                when (eventType) {
-                    ConnectionListener.Events.CONNECTED -> resendQueuedMessages()
+    private var staging: Boolean = false
+    private var debug = false
+    private var clientId: String = ""
+    private var natsConnection: Connection? = null
+    private var jetStream: JetStream? = null
+
+    private val isConnected = AtomicBoolean(false)
+    private val sdkListeners = ConcurrentHashMap<String, (String) -> Unit>()
+    private val subscribedTopics = CopyOnWriteArraySet<String>()
+    private val consumers = ConcurrentHashMap<String, Dispatcher>()
+    private val offlineMessages = Collections.synchronizedList(mutableListOf<MutableMap<String, Any?>>())
+
+    private val reservedTopics = setOf(
+        "CONNECTED", "RECONNECT", "MESSAGE_RESEND", "DISCONNECTED", "RECONNECTING", "RECONNECTED", "RECONN_FAIL"
+    )
+
+    fun init(staging: Boolean, opts: Map<String, Any>?) {
+        requireNotNull(opts) { "Options map must not be null" }
+        this.staging = staging
+        debug = opts["debug"] as? Boolean ?: false
+    }
+
+    suspend fun connect() = withContext(Dispatchers.IO) {
+        val builder = Options.Builder()
+            .noEcho()
+            .maxReconnects(1200)
+            .reconnectWait(Duration.ofMillis(1000))
+            .token(apiKey)
+            .connectionListener { _, type ->
+                when (type) {
+                    ConnectionListener.Events.RECONNECTED -> {
+                        emitSdk("RECONNECTED", "RECONNECTED")
+
+                        CoroutineScope(Dispatchers.IO).launch {
+                            resendOfflineMessages()
+                        }
+                    }
+                    ConnectionListener.Events.DISCONNECTED -> {
+                        emitSdk("DISCONNECTED", "DISCONNECTED")
+                        offlineMessages.clear()
+                    }
                     else -> {}
                 }
             }
-            .build()
 
-        connection = Nats.connect(opts)
-        jetStream = connection!!.jetStream(JetStreamOptions.defaultOptions())
+        for (port in 4221..4223) {
+            val host = if (staging) "nats://0.0.0.0:$port" else "nats://api.relay-x.io:$port"
+            builder.server(host)
+        }
+
+        natsConnection = Nats.connect(builder.build()).also {
+            jetStream = it.jetStream()
+            clientId = UUID.randomUUID().toString()
+            isConnected.set(true)
+        }
+
+        emitSdk("CONNECTED", "CONNECTED")
+
+        for (topic in subscribedTopics) {
+            sdkListeners[topic]?.let { listener ->
+                on(topic, listener)
+            }
+        }
     }
 
-    fun publish(topic: String, message: Any?): Boolean {
-        if (message == null) throw IllegalArgumentException("Message cannot be null")
-        if (topic in reservedTopics) throw IllegalArgumentException("Cannot publish to SDK reserved topic: $topic")
-        if (message !is String && message !is Number && message !is Map<*, *>)
-            throw IllegalArgumentException("Messages must be of type string, number or JSON")
+    suspend fun publish(topic: String, message: Any): Boolean = withContext(Dispatchers.IO) {
+        validateTopic(topic)
+        validateMessage(message)
+        if (reservedTopics.contains(topic)) throw IllegalArgumentException("Reserved SDK topic: $topic")
 
-        val finalTopic = "${clientId.hashCode()}.$topic"
-        val uuid = UUID.randomUUID().toString()
-        val payload = mapOf(
-            "client_id" to clientId,
-            "id" to uuid,
-            "room" to topic,
-            "message" to message,
-            "start" to Instant.now().epochSecond
-        )
+        val finalTopic = finalTopic(topic)
+        ensureStreamExists(topic)
 
-        return try {
-            if (connection?.status == Connection.Status.CONNECTED) {
-                jetStream?.publish(
-                    NatsMessage.builder()
+        val json = JSONObject().apply {
+            put("client_id", clientId)
+            put("id", UUID.randomUUID().toString())
+            put("room", topic)
+            put("message", message)
+            put("start", Instant.now().epochSecond)
+        }
+
+        if (isConnected.get()) {
+            jetStream?.publish(
+                NatsMessage.builder()
                     .subject(finalTopic)
-                    .data(gson.toJson(payload))
+                    .data(json.toString().toByteArray(StandardCharsets.UTF_8))
                     .build()
-                )
-                true
-            } else {
-                messageQueue.add(Pair(topic, message))
-                false
-            }
-        } catch (e: Exception) {
+            )
+            true
+        } else {
+            offlineMessages.add(mutableMapOf("topic" to topic, "message" to message, "resent" to false))
             false
         }
     }
 
-    fun on(topic: String, listener: MessageListener) {
-        if (topic.isBlank()) throw IllegalArgumentException("Invalid topic")
+    suspend fun on(topic: String, listener: (String) -> Unit) = withContext(Dispatchers.IO) {
+        validateTopic(topic)
+        val finalTopic = finalTopic(topic)
 
-        val finalTopic = "${clientId.hashCode()}.$topic"
-        val consumerConfig = ConsumerConfiguration.builder()
+        val config = ConsumerConfiguration.builder()
             .filterSubject(finalTopic)
-            .deliverPolicy(DeliverPolicy.New)
             .ackPolicy(AckPolicy.Explicit)
+            .deliverPolicy(DeliverPolicy.New)
             .build()
 
-        val sub = jetStream!!.subscribe(finalTopic, PushSubscribeOptions.builder()
-            .configuration(consumerConfig)
+        val options = PushSubscribeOptions.builder()
+            .configuration(config)
             .build()
-        )
 
-        val dispatcher = connection!!.createDispatcher { msg ->
-            val data = gson.fromJson(String(msg.data), Map::class.java)
-            val msgClientId = data["client_id"] as? String
-            val room = data["room"] as? String
+        val sub = jetStream?.subscribe(finalTopic, options) ?: return@withContext
 
-            if (msgClientId != clientId && room == topic) {
-                listener.onMessage(data["message"])
-                msg.ack()
+        val dispatcher = natsConnection?.createDispatcher { msg ->
+            val json = JSONObject(String(msg.data, StandardCharsets.UTF_8))
+            if (json.optString("client_id") != clientId && json.optString("room") == topic) {
+                listener(json.toString())
             }
-        }
+            msg.ack()
+        } ?: return@withContext
 
-        dispatcher.subscribe(finalTopic)
-        listeners[topic] = dispatcher
+        natsConnection?.flush(Duration.ofSeconds(1)) // ensure dispatcher setup
+
+        consumers[topic] = dispatcher
+        subscribedTopics.add(topic)
+        sdkListeners[topic] = listener
     }
+
+
 
     fun off(topic: String): Boolean {
-        if (topic.isBlank()) throw IllegalArgumentException("Invalid topic")
-        val dispatcher = listeners.remove(topic) ?: return false
+        validateTopic(topic)
+        return consumers.remove(topic)?.let {
+            it.unsubscribe(finalTopic(topic))
+            subscribedTopics.remove(topic)
+            sdkListeners.remove(topic)
+            true
+        } ?: false
+    }
+
+    suspend fun history(topic: String, start: LocalDateTime, end: LocalDateTime?): List<String> = withContext(Dispatchers.IO) {
+        validateTopic(topic)
+        requireNotNull(start) { "Start date cannot be null" }
+        if (end != null && end.isBefore(start)) throw IllegalArgumentException("End date before start")
+        if (!isConnected.get()) return@withContext emptyList()
+
+        val finalTopic = finalTopic(topic)
+        val from = start.toEpochSecond(ZoneOffset.UTC)
+        val to = (end ?: LocalDateTime.now()).toEpochSecond(ZoneOffset.UTC)
+        val result = mutableListOf<String>()
+
+        val config = ConsumerConfiguration.builder()
+            .filterSubject(finalTopic)
+            .ackPolicy(AckPolicy.None)
+            .deliverPolicy(DeliverPolicy.All)
+            .build()
+        val opts = PullSubscribeOptions.builder().configuration(config).build()
+        val sub = jetStream?.subscribe(finalTopic, opts)
+
+        sub?.pull(100)
+        val fetched = sub?.fetch(100, Duration.ofSeconds(2)) ?: return@withContext result
+
+        for (msg in fetched) {
+            val json = JSONObject(String(msg.data, StandardCharsets.UTF_8))
+            val ts = json.optLong("start")
+            if (ts in from..to) result.add(json.toString())
+        }
+        result
+    }
+
+    fun close() {
         try {
-            dispatcher.unsubscribe(topic)
-            return true
+            natsConnection?.close()
+            isConnected.set(false)
         } catch (e: Exception) {
-            return false
+            if (debug) Log.e("Realtime", "Error on close: ${e.message}")
         }
     }
 
-    private fun resendQueuedMessages() {
-        for ((topic, message) in messageQueue) {
-            publish(topic, message)
+    private suspend fun resendOfflineMessages() = withContext(Dispatchers.IO) {
+        val result = mutableListOf<Map<String, Any?>>()
+        for (msg in offlineMessages) {
+            val topic = msg["topic"] as? String ?: continue
+            val content = msg["message"] ?: continue
+            val sent = publish(topic, content)
+            msg["resent"] = sent
+            result.add(msg)
         }
-        messageQueue.clear()
+        offlineMessages.clear()
+        sdkListeners["MESSAGE_RESEND"]?.invoke(JSONObject(mapOf("resend" to result)).toString())
     }
 
-    interface MessageListener {
-        fun onMessage(message: Any?)
+    private fun validateTopic(topic: String) {
+        require(topic.isNotBlank() && !topic.contains(" ") && !topic.contains("*")) { "Invalid topic" }
     }
+
+    private fun validateMessage(msg: Any) {
+        require(msg is String || msg is Number || msg is Map<*, *>) { "Message must be string, number or JSON" }
+    }
+
+    private fun finalTopic(topic: String): String =
+        "${(apiKey + secretKey).hashCode().toUInt().toString(16)}.$topic"
+
+    private fun emitSdk(topic: String, message: String) {
+        sdkListeners[topic]?.invoke(message)
+    }
+
+    private fun ensureStreamExists(topic: String) {
+        val streamName = "stream_$topic"
+        try {
+            val jsm = natsConnection?.jetStreamManagement() ?: return
+            jsm.getStreamInfo(streamName)
+        } catch (e: JetStreamApiException) {
+            val config = StreamConfiguration.builder()
+                .name(streamName)
+                .subjects(finalTopic(topic))
+                .storageType(StorageType.File)
+                .build()
+            natsConnection?.jetStreamManagement()?.addStream(config)
+        }
+    }
+
 }
