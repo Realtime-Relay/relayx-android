@@ -1,3 +1,4 @@
+// Realtime.kt
 package com.relay.realtime.realtimeSDK
 
 import android.util.Log
@@ -58,10 +59,7 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
                 when (type) {
                     ConnectionListener.Events.RECONNECTED -> {
                         emitSdk("RECONNECTED", "RECONNECTED")
-
-                        CoroutineScope(Dispatchers.IO).launch {
-                            resendOfflineMessages()
-                        }
+                        CoroutineScope(Dispatchers.IO).launch { resendOfflineMessages() }
                     }
                     ConnectionListener.Events.DISCONNECTED -> {
                         emitSdk("DISCONNECTED", "DISCONNECTED")
@@ -84,11 +82,7 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
 
         emitSdk("CONNECTED", "CONNECTED")
 
-        for (topic in subscribedTopics) {
-            sdkListeners[topic]?.let { listener ->
-                on(topic, listener)
-            }
-        }
+        subscribeToTopics()
     }
 
     suspend fun publish(topic: String, message: Any): Boolean = withContext(Dispatchers.IO) {
@@ -151,8 +145,6 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
         subscribedTopics.add(topic)
         sdkListeners[topic] = listener
     }
-
-
 
     fun off(topic: String): Boolean {
         validateTopic(topic)
@@ -246,4 +238,44 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
         }
     }
 
+    private fun getNamespace(): String? {
+        val requestSubject = "account.user.get_namespace"
+        val payload = JSONObject().put("api_key", apiKey).toString().toByteArray(StandardCharsets.UTF_8)
+        val response = natsConnection?.request(requestSubject, payload, Duration.ofSeconds(2)) ?: return null
+        val json = JSONObject(String(response.data, StandardCharsets.UTF_8))
+        return json.optString("namespace", null)
+    }
+
+    private fun subscribeToTopics() {
+        for (topic in subscribedTopics) {
+            try {
+                val finalTopic = finalTopic(topic)
+                ensureStreamExists(topic)
+                val config = ConsumerConfiguration.builder()
+                    .filterSubject(finalTopic)
+                    .ackPolicy(AckPolicy.Explicit)
+                    .deliverPolicy(DeliverPolicy.New)
+                    .build()
+                val options = PushSubscribeOptions.builder().configuration(config).build()
+                val dispatcher = natsConnection?.createDispatcher { msg ->
+                    try {
+                        val json = JSONObject(String(msg.data, StandardCharsets.UTF_8))
+                        val message = JSONObject().apply {
+                            put("id", json.optString("id"))
+                            put("message", json.opt("message"))
+                        }
+                        msg.ack()
+                        sdkListeners[topic]?.invoke(message.toString())
+                    } catch (e: Exception) {
+                        msg.nak()
+                        if (debug) Log.e("Realtime", "Error in consumer callback: ${e.message}")
+                    }
+                } ?: continue
+                jetStream?.subscribe(finalTopic, options)
+                consumers[topic] = dispatcher
+            } catch (e: Exception) {
+                if (debug) Log.e("Realtime", "Failed to subscribe to topic '$topic': ${e.message}")
+            }
+        }
+    }
 }
