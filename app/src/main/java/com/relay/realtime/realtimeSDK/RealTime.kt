@@ -1,4 +1,3 @@
-// Realtime.kt
 package com.relay.realtime.realtimeSDK
 
 import android.util.Log
@@ -10,6 +9,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.msgpack.core.MessagePack
+import org.msgpack.core.MessageUnpacker
+import org.msgpack.core.MessageBufferPacker
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.time.Instant
@@ -101,11 +103,15 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
             put("start", Instant.now().epochSecond)
         }
 
+        val packer: MessageBufferPacker = MessagePack.newDefaultBufferPacker()
+        packer.writePayload(json.toString().toByteArray(StandardCharsets.UTF_8))
+        packer.close()
+
         if (isConnected.get()) {
             jetStream?.publish(
                 NatsMessage.builder()
                     .subject(finalTopic)
-                    .data(json.toString().toByteArray(StandardCharsets.UTF_8))
+                    .data(packer.toByteArray())
                     .build()
             )
             true
@@ -132,14 +138,17 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
         val sub = jetStream?.subscribe(finalTopic, options) ?: return@withContext
 
         val dispatcher = natsConnection?.createDispatcher { msg ->
-            val json = JSONObject(String(msg.data, StandardCharsets.UTF_8))
+            val unpacker: MessageUnpacker = MessagePack.newDefaultUnpacker(msg.data)
+            val bytes = unpacker.readPayload(msg.data.size)
+            unpacker.close()
+            val json = JSONObject(String(bytes, StandardCharsets.UTF_8))
             if (json.optString("client_id") != clientId && json.optString("room") == topic) {
                 listener(json.toString())
             }
             msg.ack()
         } ?: return@withContext
 
-        natsConnection?.flush(Duration.ofSeconds(1)) // ensure dispatcher setup
+        natsConnection?.flush(Duration.ofSeconds(1))
 
         consumers[topic] = dispatcher
         subscribedTopics.add(topic)
@@ -179,7 +188,10 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
         val fetched = sub?.fetch(100, Duration.ofSeconds(2)) ?: return@withContext result
 
         for (msg in fetched) {
-            val json = JSONObject(String(msg.data, StandardCharsets.UTF_8))
+            val unpacker: MessageUnpacker = MessagePack.newDefaultUnpacker(msg.data)
+            val bytes = unpacker.readPayload(msg.data.size)
+            unpacker.close()
+            val json = JSONObject(String(bytes, StandardCharsets.UTF_8))
             val ts = json.optLong("start")
             if (ts in from..to) result.add(json.toString())
         }
@@ -259,7 +271,10 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
                 val options = PushSubscribeOptions.builder().configuration(config).build()
                 val dispatcher = natsConnection?.createDispatcher { msg ->
                     try {
-                        val json = JSONObject(String(msg.data, StandardCharsets.UTF_8))
+                        val unpacker = MessagePack.newDefaultUnpacker(msg.data)
+                        val bytes = unpacker.readPayload(msg.data.size)
+                        unpacker.close()
+                        val json = JSONObject(String(bytes, StandardCharsets.UTF_8))
                         val message = JSONObject().apply {
                             put("id", json.optString("id"))
                             put("message", json.opt("message"))
