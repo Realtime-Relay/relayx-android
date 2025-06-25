@@ -1,51 +1,118 @@
 package com.relay.realtime
 
 import android.os.Bundle
-import android.widget.Button
-import android.widget.Toast
-import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
+import android.util.Log
+import android.widget.*
+import androidx.lifecycle.lifecycleScope
+import com.relay.realtime.realtimeSDK.Realtime
 import com.relay.realtime.realtimeSDK.Utils
-import org.json.JSONObject
+import kotlinx.coroutines.*
+import java.time.LocalDateTime
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var subscriptionId: String
+    private lateinit var realtime: Realtime
 
+    private lateinit var connectBtn: Button
+    private lateinit var disconnectBtn: Button
+    private lateinit var subscribeBtn: Button
+    private lateinit var publishBtn: Button
+    private lateinit var historyBtn: Button
+    private lateinit var topicInput: EditText
+    private lateinit var messageInput: EditText
+    private lateinit var messageLog: TextView
+
+    private val scope = CoroutineScope(Dispatchers.IO)
+    private val logTag = "RealtimeUI"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+        setContentView(R.layout.activity_main) // XML provided below
 
-        moreInfo()
-//        initUI()
-    }
+        // Bind views
+        connectBtn = findViewById(R.id.connectBtn)
+        disconnectBtn = findViewById(R.id.disconnectBtn)
+        subscribeBtn = findViewById(R.id.subscribeBtn)
+        publishBtn = findViewById(R.id.publishBtn)
+        historyBtn = findViewById(R.id.historyBtn)
+        topicInput = findViewById(R.id.topicInput)
+        messageInput = findViewById(R.id.messageInput)
+        messageLog = findViewById(R.id.messageLog)
 
-    private fun moreInfo() {
-        val realtime = com.relay.realtime.realtimeSDK.Realtime(Utils.API_KEY, Utils.SECRET_KEY)
-        val options = JSONObject().apply {
-            put("debug", true)
+        // Init SDK
+        realtime = Realtime(Utils.API_KEY, Utils.SECRET_KEY)
+        realtime.init(staging = false, opts = mapOf("debug" to true))
+
+        // Event handlers
+        connectBtn.setOnClickListener {
+            scope.launch {
+                realtime.connect()
+                appendLog("Connected to Relay")
+            }
         }
 
-        realtime.init(staging = true, opts = options)
-        realtime.publish("updates", JSONObject("{\"status\":\"ok\"}"))
+        disconnectBtn.setOnClickListener {
+            realtime.close()
+            appendLog("Disconnected from Relay")
+        }
+
+        subscribeBtn.setOnClickListener {
+            val topic = topicInput.text.toString().trim()
+            if (topic.isNotEmpty()) {
+                scope.launch {
+                    realtime.on(topic) { msg ->
+                        appendLog("Message received: $msg")
+                    }
+                    appendLog("Subscribed to $topic")
+                }
+            }
+        }
+
+        publishBtn.setOnClickListener {
+            val topic = topicInput.text.toString().trim()
+            val message = messageInput.text.toString().trim()
+            if (topic.isNotEmpty() && message.isNotEmpty()) {
+                scope.launch {
+                    val success = realtime.publish(topic, message)
+                    appendLog("Message published: $success")
+                }
+            }
+        }
+
+        historyBtn.setOnClickListener {
+            val topic = topicInput.text.toString().trim()
+            if (topic.isNotEmpty()) {
+                scope.launch {
+                    val history = realtime.history(
+                        topic = topic,
+                        start = LocalDateTime.now().minusHours(1),
+                        end = LocalDateTime.now()
+                    )
+                    appendLog("History:\n" + history.joinToString("\n"))
+                }
+            }
+        }
+
+        // SDK event listeners
+        CoroutineScope(Dispatchers.IO).launch {
+            realtime.on("CONNECTED") { appendLog("SDK: CONNECTED") }
+            realtime.on("DISCONNECTED") { appendLog("SDK: DISCONNECTED") }
+            realtime.on("RECONNECTED") { appendLog("SDK: RECONNECTED") }
+            realtime.on("MESSAGE_RESEND") { appendLog("SDK: MESSAGE_RESEND\n$it") }
+        }
     }
 
-//    private fun initUI() {
-//        RelaySDK.initialize("eyJ0eXAiOiJKV1QiLCJhbGciOiJlZDI1NTE5LW5rZXkifQ.eyJhdWQiOiJOQVRTIiwibmFtZSI6IklPUyBEZXYiLCJzdWIiOiJVQU9STjRWQkNXQzJORU1FVkpFWUY3VERIUVdYTUNLTExTWExNTjZRTjRBVU1WUElDSVJOSEpJRyIsIm5hdHMiOnsiZGF0YSI6LTEsInBheWxvYWQiOi0xLCJzdWJzIjotMSwicHViIjp7ImRlbnkiOlsiPiJdfSwic3ViIjp7ImRlbnkiOlsiPiJdfSwib3JnX2RhdGEiOnsib3JnYW5pemF0aW9uIjoicmVsYXktaW50ZXJuYWwiLCJwcm9qZWN0IjoiSU9TIERldiJ9LCJpc3N1ZXJfYWNjb3VudCI6IkFDWklKWkNJWFNTVVU1NVlFR01QMjM2TUpJMkNSSVJGRkdJRDRKVlE2V1FZWlVXS08yVTdZNEJCIiwidHlwZSI6InVzZXIiLCJ2ZXJzaW9uIjoyfSwiaXNzIjoiQUNaSUpaQ0lYU1NVVTU1WUVHTVAyMzZNSkkyQ1JJUkZGR0lENEpWUTZXUVlaVVdLTzJVN1k0QkIiLCJpYXQiOjE3NDUwNTE2NjcsImp0aSI6IllVMG50TXFNcHhwWFNWbUp0OUJDazhhV0dxd0NwYytVQ0xwa05lWVBVcDNNRTNQWDBRcUJ2ZjBBbVJXMVRDamEvdTg2emIrYUVzSHVKUFNmOFB2SXJnPT0ifQ._LtZJnTADAnz3N6U76OaA-HCYq-XxckChk1WlHi_oZXfYP2vqcGIiNDFSQ-XpfjUTfKtXEuzcf_BDq54nSEMAA", "SUAPWRWRITWYL4YP7B5ZHU3W2G2ZPYJ47IN4UWNHLMFTSIJEOMQJWWSWGY")
-//        RelaySDK.connect()
-//
-//        subscriptionId = RelaySDK.subscribe("chat-room") {
-//            runOnUiThread {
-//                Toast.makeText(this, "Received: ${it.content}", Toast.LENGTH_SHORT).show()
-//            }
-//        }
-//
-//        findViewById<Button>(R.id.sendButton).setOnClickListener {
-//            RelaySDK.publish("chat-room", "Hello from Android!")
-//        }
-//
-//    }
+    private fun appendLog(msg: String) {
+        runOnUiThread {
+            messageLog.append("➤ $msg\n\n")
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        scope.cancel()
+        realtime.close()
+    }
+
 }
