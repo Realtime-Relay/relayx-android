@@ -57,6 +57,13 @@
                 android:layout_height="wrap_content" />
 
             <Button
+                android:id="@+id/unsubscribeBtn"
+                android:text="Unsubscribe"
+                android:layout_weight="1"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content" />
+
+            <Button
                 android:id="@+id/publishBtn"
                 android:text="Publish"
                 android:layout_weight="1"

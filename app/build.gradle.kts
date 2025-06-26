@@ -50,7 +50,7 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 
-    implementation("io.nats:jnats:2.16.10") // Java NATS Client
+    implementation("io.nats:jnats:2.17.6") // Java NATS Client
     implementation("com.google.code.gson:gson:2.10.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.1")
     implementation("org.msgpack:msgpack-core:0.9.0")

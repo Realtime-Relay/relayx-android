@@ -1,6 +1,8 @@
 package com.relay.realtime.realtimeSDK
 
+import android.content.Context
 import android.util.Log
+import com.relay.realtime.R
 import io.nats.client.*
 import io.nats.client.api.*
 import io.nats.client.impl.NatsMessage
@@ -12,6 +14,8 @@ import org.json.JSONObject
 import org.msgpack.core.MessagePack
 import org.msgpack.core.MessageUnpacker
 import org.msgpack.core.MessageBufferPacker
+import java.io.File
+import java.io.FileOutputStream
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.time.Instant
@@ -22,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicBoolean
 
-class Realtime(private val apiKey: String, private val secretKey: String) {
+class Realtime(private val context: Context, private val apiKey: String, private val secretKey: String) {
 
     init {
         require(apiKey.isNotBlank()) { "apiKey must not be empty" }
@@ -51,8 +55,24 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
         debug = opts["debug"] as? Boolean ?: false
     }
 
+    fun copyAssetToCache(context: Context, assetFileName: String): String {
+        val file = File(context.cacheDir, assetFileName)
+        if (!file.exists()) {
+            context.assets.open(assetFileName).use { input ->
+                FileOutputStream(file).use { output ->
+                    input.copyTo(output)
+                }
+            }
+        }
+        return file.absolutePath
+    }
+
+
     suspend fun connect() = withContext(Dispatchers.IO) {
+        val credsPath = copyAssetToCache(context, "admin.creds")
+
         val builder = Options.Builder()
+            .credentialPath(credsPath)
             .noEcho()
             .maxReconnects(1200)
             .reconnectWait(Duration.ofMillis(1000))
@@ -167,6 +187,8 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
 
     suspend fun history(topic: String, start: LocalDateTime, end: LocalDateTime?): List<String> = withContext(Dispatchers.IO) {
         validateTopic(topic)
+
+        println("Connection: " +isConnected.get())
         requireNotNull(start) { "Start date cannot be null" }
         if (end != null && end.isBefore(start)) throw IllegalArgumentException("End date before start")
         if (!isConnected.get()) return@withContext emptyList()
@@ -185,7 +207,7 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
         val sub = jetStream?.subscribe(finalTopic, opts)
 
         sub?.pull(100)
-        val fetched = sub?.fetch(100, Duration.ofSeconds(2)) ?: return@withContext result
+        val fetched = sub?.fetch(100, Duration.ofSeconds(10)) ?: return@withContext result
 
         for (msg in fetched) {
             val unpacker: MessageUnpacker = MessagePack.newDefaultUnpacker(msg.data)

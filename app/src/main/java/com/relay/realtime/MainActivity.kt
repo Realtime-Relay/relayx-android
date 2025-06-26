@@ -17,6 +17,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var connectBtn: Button
     private lateinit var disconnectBtn: Button
     private lateinit var subscribeBtn: Button
+    private lateinit var unsubscribeBtn: Button
     private lateinit var publishBtn: Button
     private lateinit var historyBtn: Button
     private lateinit var topicInput: EditText
@@ -34,6 +35,7 @@ class MainActivity : AppCompatActivity() {
         connectBtn = findViewById(R.id.connectBtn)
         disconnectBtn = findViewById(R.id.disconnectBtn)
         subscribeBtn = findViewById(R.id.subscribeBtn)
+        unsubscribeBtn = findViewById(R.id.unsubscribeBtn)
         publishBtn = findViewById(R.id.publishBtn)
         historyBtn = findViewById(R.id.historyBtn)
         topicInput = findViewById(R.id.topicInput)
@@ -41,7 +43,7 @@ class MainActivity : AppCompatActivity() {
         messageLog = findViewById(R.id.messageLog)
 
         // Init SDK
-        realtime = Realtime(Utils.API_KEY, Utils.SECRET_KEY)
+        realtime = Realtime(this@MainActivity, Utils.API_KEY, Utils.SECRET_KEY)
         realtime.init(staging = false, opts = mapOf("debug" to true))
 
         // Event handlers
@@ -69,6 +71,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        unsubscribeBtn.setOnClickListener {
+            val topic = topicInput.text.toString().trim()
+            if (topic.isNotEmpty()) {
+                scope.launch {
+                    realtime.off(topic)
+                    appendLog("Unsubscribed to $topic")
+                }
+            }
+        }
+
         publishBtn.setOnClickListener {
             val topic = topicInput.text.toString().trim()
             val message = messageInput.text.toString().trim()
@@ -89,6 +101,8 @@ class MainActivity : AppCompatActivity() {
                         start = LocalDateTime.now().minusHours(1),
                         end = LocalDateTime.now()
                     )
+
+                    println("History: " + history)
                     appendLog("History:\n" + history.joinToString("\n"))
                 }
             }
