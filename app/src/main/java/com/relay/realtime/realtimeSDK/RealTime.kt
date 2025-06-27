@@ -251,7 +251,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     }
 
     private fun finalTopic(topic: String): String =
-        "${(apiKey + secretKey).hashCode().toUInt().toString(16)}.$topic"
+        "${getNamespace()}.$topic"
 
     private fun emitSdk(topic: String, message: String) {
         sdkListeners[topic]?.invoke(message)

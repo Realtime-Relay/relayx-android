@@ -8,6 +8,7 @@ import androidx.lifecycle.lifecycleScope
 import com.relay.realtime.realtimeSDK.Realtime
 import com.relay.realtime.realtimeSDK.Utils
 import kotlinx.coroutines.*
+import org.json.JSONObject
 import java.time.LocalDateTime
 
 class MainActivity : AppCompatActivity() {
@@ -86,7 +87,12 @@ class MainActivity : AppCompatActivity() {
             val message = messageInput.text.toString().trim()
             if (topic.isNotEmpty() && message.isNotEmpty()) {
                 scope.launch {
-                    val success = realtime.publish(topic, message)
+//                    val success = realtime.publish(topic, message)
+
+                    var jsonObject = JSONObject()
+                    jsonObject.put("data", jsonObject)
+
+                    val success = realtime.publish(topic, jsonObject)
                     appendLog("Message published: $success")
                 }
             }

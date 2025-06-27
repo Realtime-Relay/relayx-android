@@ -17,9 +17,9 @@
 
         <EditText
             android:id="@+id/messageInput"
-            android:hint="Enter message"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:hint="Enter message"
             android:inputType="text" />
 
         <LinearLayout
