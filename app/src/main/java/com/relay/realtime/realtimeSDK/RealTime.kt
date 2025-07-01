@@ -2,7 +2,8 @@ package com.relay.realtime.realtimeSDK
 
 import android.content.Context
 import android.util.Log
-import com.relay.realtime.R
+import com.relay.realtime.models.JsonWriter
+import com.relay.realtime.models.Pojo
 import io.nats.client.*
 import io.nats.client.api.*
 import io.nats.client.impl.NatsMessage
@@ -11,9 +12,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.msgpack.core.MessageBufferPacker
 import org.msgpack.core.MessagePack
 import org.msgpack.core.MessageUnpacker
-import org.msgpack.core.MessageBufferPacker
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.charset.StandardCharsets
@@ -25,6 +26,7 @@ import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicBoolean
+
 
 class Realtime(private val context: Context, private val apiKey: String, private val secretKey: String) {
 
@@ -79,6 +81,9 @@ class Realtime(private val context: Context, private val apiKey: String, private
             .token(apiKey)
             .connectionListener { _, type ->
                 when (type) {
+                    ConnectionListener.Events.CONNECTED -> {
+                        println("Connected")
+                    }
                     ConnectionListener.Events.RECONNECTED -> {
                         emitSdk("RECONNECTED", "RECONNECTED")
                         CoroutineScope(Dispatchers.IO).launch { resendOfflineMessages() }
@@ -251,7 +256,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     }
 
     private fun finalTopic(topic: String): String =
-        "${getNamespace()}.$topic"
+        "abc123hash.$topic"
 
     private fun emitSdk(topic: String, message: String) {
         sdkListeners[topic]?.invoke(message)
@@ -272,12 +277,47 @@ class Realtime(private val context: Context, private val apiKey: String, private
         }
     }
 
-    private fun getNamespace(): String? {
-        val requestSubject = "account.user.get_namespace"
-        val payload = JSONObject().put("api_key", apiKey).toString().toByteArray(StandardCharsets.UTF_8)
-        val response = natsConnection?.request(requestSubject, payload, Duration.ofSeconds(2)) ?: return null
-        val json = JSONObject(String(response.data, StandardCharsets.UTF_8))
-        return json.optString("namespace", null)
+    private fun getPojo(): Pojo {
+        val ppub: Pojo = Pojo()
+        ppub.api_key = apiKey
+        return ppub
+    }
+
+
+    fun getNamespace(): String? {
+        println("natsConnection: " + natsConnection)
+
+        if(natsConnection != null) {
+            natsConnection?.let {
+                println("1 natsConnection: " + natsConnection)
+
+                val requestJson = JSONObject()
+                requestJson.put("api_key", apiKey)
+
+                val originalPojo: Pojo? = getPojo()
+                val originalJson: String? = JsonWriter.toJson(originalPojo)
+
+                println("originalJson: " + originalJson)
+                val subject = "account.user.get_namespace"
+                val timeout = Duration.ofSeconds(200)
+
+                val responseMsg = it.request(
+                    subject,
+                    originalJson?.toByteArray(Charsets.UTF_8),
+                    timeout
+                )
+
+                println("responseMsg: " + responseMsg)
+
+                val responseStr = String(responseMsg?.data ?: byteArrayOf(), Charsets.UTF_8)
+                println("responseStr: " + responseStr)
+
+                val responseJson = JSONObject(responseStr)
+                return responseJson.getString("namespace")
+
+            } ?: return null
+        } else
+            return null
     }
 
     private fun subscribeToTopics() {
@@ -315,4 +355,33 @@ class Realtime(private val context: Context, private val apiKey: String, private
             }
         }
     }
+
+    fun createNatsCredsFile(context: Context, jwt: String, nkeySeed: String): File {
+        val filename = "nats_user.creds"
+
+        val fileContent = """
+        -----BEGIN NATS USER JWT-----
+        $jwt
+        ------END NATS USER JWT------
+
+        ************************* IMPORTANT *************************
+        NKEY Seed printed below can be used to sign and prove identity.
+        NKEYs are sensitive and should be treated as secrets.
+
+        -----BEGIN USER NKEY SEED-----
+        $nkeySeed
+        ------END USER NKEY SEED------
+
+        *************************************************************
+    """.trimIndent()
+
+        // Save to internal storage (private to the app)
+        val file = File(context.filesDir, filename)
+        FileOutputStream(file).use { output ->
+            output.write(fileContent.toByteArray(Charsets.UTF_8))
+        }
+
+        return file
+    }
+
 }

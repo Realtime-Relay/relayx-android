@@ -83,17 +83,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         publishBtn.setOnClickListener {
+
+            println("realtime.getNamespace(): " + realtime.getNamespace())
+
             val topic = topicInput.text.toString().trim()
             val message = messageInput.text.toString().trim()
             if (topic.isNotEmpty() && message.isNotEmpty()) {
                 scope.launch {
 //                    val success = realtime.publish(topic, message)
-
-                    var jsonObject = JSONObject()
-                    jsonObject.put("data", jsonObject)
-
-                    val success = realtime.publish(topic, jsonObject)
-                    appendLog("Message published: $success")
+                        println("realtime.getNamespace(): " + realtime.getNamespace())
+//                    var jsonObject = JSONObject()
+//                    jsonObject.put("data", jsonObject)
+//
+//                    val success = realtime.publish(topic, message)
+//                    appendLog("Message published: $success")
                 }
             }
         }
