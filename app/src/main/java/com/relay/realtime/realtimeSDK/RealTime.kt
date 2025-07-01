@@ -70,11 +70,11 @@ class Realtime(private val context: Context, private val apiKey: String, private
     }
 
 
-    suspend fun connect() = withContext(Dispatchers.IO) {
-        val credsPath = copyAssetToCache(context, "admin.creds")
+    suspend fun connect(filePath: String) = withContext(Dispatchers.IO) {
+//        val credsPath = copyAssetToCache(context, filePath)
 
         val builder = Options.Builder()
-            .credentialPath(credsPath)
+            .authHandler(Nats.credentials(filePath))
             .noEcho()
             .maxReconnects(1200)
             .reconnectWait(Duration.ofMillis(1000))
@@ -109,6 +109,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
         emitSdk("CONNECTED", "CONNECTED")
 
+        println("Getnamespace: " + getNamespace())
         subscribeToTopics()
     }
 
@@ -118,6 +119,8 @@ class Realtime(private val context: Context, private val apiKey: String, private
         if (reservedTopics.contains(topic)) throw IllegalArgumentException("Reserved SDK topic: $topic")
 
         val finalTopic = finalTopic(topic)
+
+        println("finalTopic: " + finalTopic)
         ensureStreamExists(topic)
 
         val json = JSONObject().apply {
@@ -150,6 +153,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         validateTopic(topic)
         val finalTopic = finalTopic(topic)
 
+        println("finalTopic: " + finalTopic)
         val config = ConsumerConfiguration.builder()
             .filterSubject(finalTopic)
             .ackPolicy(AckPolicy.Explicit)
@@ -162,11 +166,16 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
         val sub = jetStream?.subscribe(finalTopic, options) ?: return@withContext
 
+        println("Sub: " + sub.consumerInfo)
+        println("natsConnection: " + natsConnection)
         val dispatcher = natsConnection?.createDispatcher { msg ->
+            println("message: " + natsConnection)
             val unpacker: MessageUnpacker = MessagePack.newDefaultUnpacker(msg.data)
             val bytes = unpacker.readPayload(msg.data.size)
-            unpacker.close()
             val json = JSONObject(String(bytes, StandardCharsets.UTF_8))
+            unpacker.close()
+
+            println("Json: " + json)
             if (json.optString("client_id") != clientId && json.optString("room") == topic) {
                 listener(json.toString())
             }
@@ -256,7 +265,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     }
 
     private fun finalTopic(topic: String): String =
-        "abc123hash.$topic"
+        "${getNamespace()}.$topic"
 
     private fun emitSdk(topic: String, message: String) {
         sdkListeners[topic]?.invoke(message)
@@ -285,35 +294,29 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
 
     fun getNamespace(): String? {
-        println("natsConnection: " + natsConnection)
-
         if(natsConnection != null) {
             natsConnection?.let {
-                println("1 natsConnection: " + natsConnection)
 
                 val requestJson = JSONObject()
                 requestJson.put("api_key", apiKey)
 
                 val originalPojo: Pojo? = getPojo()
-                val originalJson: String? = JsonWriter.toJson(originalPojo)
+                val originalJson = JsonWriter.toJsonBytes(originalPojo)
 
-                println("originalJson: " + originalJson)
-                val subject = "account.user.get_namespace"
-                val timeout = Duration.ofSeconds(200)
+                val subject = "accounts.user.get_namespace"
+                val timeout = Duration.ofSeconds(20)
 
-                val responseMsg = it.request(
+                val responseMsg: Message? = it.request(
                     subject,
-                    originalJson?.toByteArray(Charsets.UTF_8),
+                    originalJson,
                     timeout
                 )
 
-                println("responseMsg: " + responseMsg)
-
                 val responseStr = String(responseMsg?.data ?: byteArrayOf(), Charsets.UTF_8)
-                println("responseStr: " + responseStr)
-
                 val responseJson = JSONObject(responseStr)
-                return responseJson.getString("namespace")
+                val responseDataJson = JSONObject(responseJson.getString("data"))
+
+                return responseDataJson.getString("hash")
 
             } ?: return null
         } else
@@ -355,33 +358,4 @@ class Realtime(private val context: Context, private val apiKey: String, private
             }
         }
     }
-
-    fun createNatsCredsFile(context: Context, jwt: String, nkeySeed: String): File {
-        val filename = "nats_user.creds"
-
-        val fileContent = """
-        -----BEGIN NATS USER JWT-----
-        $jwt
-        ------END NATS USER JWT------
-
-        ************************* IMPORTANT *************************
-        NKEY Seed printed below can be used to sign and prove identity.
-        NKEYs are sensitive and should be treated as secrets.
-
-        -----BEGIN USER NKEY SEED-----
-        $nkeySeed
-        ------END USER NKEY SEED------
-
-        *************************************************************
-    """.trimIndent()
-
-        // Save to internal storage (private to the app)
-        val file = File(context.filesDir, filename)
-        FileOutputStream(file).use { output ->
-            output.write(fileContent.toByteArray(Charsets.UTF_8))
-        }
-
-        return file
-    }
-
 }

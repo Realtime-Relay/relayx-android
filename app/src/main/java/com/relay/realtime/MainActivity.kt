@@ -7,6 +7,7 @@ import android.widget.*
 import androidx.lifecycle.lifecycleScope
 import com.relay.realtime.realtimeSDK.Realtime
 import com.relay.realtime.realtimeSDK.Utils
+import com.relay.realtime.realtimeSDK.Utils.createNatsCredsFile
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.time.LocalDateTime
@@ -42,6 +43,7 @@ class MainActivity : AppCompatActivity() {
         topicInput = findViewById(R.id.topicInput)
         messageInput = findViewById(R.id.messageInput)
         messageLog = findViewById(R.id.messageLog)
+        val credsFile = createNatsCredsFile(this, Utils.API_KEY, Utils.SECRET_KEY)
 
         // Init SDK
         realtime = Realtime(this@MainActivity, Utils.API_KEY, Utils.SECRET_KEY)
@@ -50,7 +52,7 @@ class MainActivity : AppCompatActivity() {
         // Event handlers
         connectBtn.setOnClickListener {
             scope.launch {
-                realtime.connect()
+                realtime.connect(credsFile.absolutePath)
                 appendLog("Connected to Relay")
             }
         }
@@ -83,20 +85,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         publishBtn.setOnClickListener {
-
-            println("realtime.getNamespace(): " + realtime.getNamespace())
-
             val topic = topicInput.text.toString().trim()
             val message = messageInput.text.toString().trim()
             if (topic.isNotEmpty() && message.isNotEmpty()) {
                 scope.launch {
-//                    val success = realtime.publish(topic, message)
-                        println("realtime.getNamespace(): " + realtime.getNamespace())
-//                    var jsonObject = JSONObject()
-//                    jsonObject.put("data", jsonObject)
-//
-//                    val success = realtime.publish(topic, message)
-//                    appendLog("Message published: $success")
+                    val success = realtime.publish(topic, message)
+
+                    println("Success: " + success)
+                    appendLog("Message published: $success")
                 }
             }
         }
