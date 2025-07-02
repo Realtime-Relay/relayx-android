@@ -1,17 +1,13 @@
 package com.relay.realtime
 
 import android.os.Bundle
-import android.util.Log
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import com.relay.realtime.MainRealTime.MessageListener
 import com.relay.realtime.realtimeSDK.Realtime
 import com.relay.realtime.realtimeSDK.Utils
 import com.relay.realtime.realtimeSDK.Utils.createNatsCredsFile
 import kotlinx.coroutines.*
-import java.time.LocalDateTime
-import java.util.Date
 
 
 class MainActivity : AppCompatActivity() {
@@ -48,7 +44,7 @@ class MainActivity : AppCompatActivity() {
         val credsFile = createNatsCredsFile(this, Utils.API_KEY, Utils.SECRET_KEY)
 
         // Init SDK
-        realtime = Realtime(this@MainActivity, Utils.API_KEY, Utils.SECRET_KEY)
+        realtime = Realtime(Utils.API_KEY, Utils.SECRET_KEY)
         realtime.init(staging = false, opts = mapOf("debug" to true))
 
         // Event handlers

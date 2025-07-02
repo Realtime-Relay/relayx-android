@@ -8,7 +8,6 @@ import io.nats.client.Connection
 import io.nats.client.ConnectionListener
 import io.nats.client.Dispatcher
 import io.nats.client.JetStream
-import io.nats.client.JetStreamApiException
 import io.nats.client.Message
 import io.nats.client.Nats
 import io.nats.client.Options
@@ -29,14 +28,8 @@ import org.json.JSONObject
 import org.msgpack.core.MessageBufferPacker
 import org.msgpack.core.MessagePack
 import org.msgpack.core.MessageUnpacker
-import java.io.File
-import java.io.FileOutputStream
-import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.time.Duration
-import java.time.Instant
-import java.time.LocalDateTime
-import java.time.ZoneOffset
 import java.util.Collections
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -44,7 +37,7 @@ import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicBoolean
 
 
-class Realtime(private val context: Context, private val apiKey: String, private val secretKey: String) {
+class Realtime(private val apiKey: String, private val secretKey: String) {
 
     init {
         require(apiKey.isNotBlank()) { "apiKey must not be empty" }
