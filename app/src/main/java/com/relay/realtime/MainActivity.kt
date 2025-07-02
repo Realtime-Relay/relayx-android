@@ -1,16 +1,18 @@
 package com.relay.realtime
 
 import android.os.Bundle
-import androidx.appcompat.app.AppCompatActivity
 import android.util.Log
 import android.widget.*
+import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.relay.realtime.MainRealTime.MessageListener
 import com.relay.realtime.realtimeSDK.Realtime
 import com.relay.realtime.realtimeSDK.Utils
 import com.relay.realtime.realtimeSDK.Utils.createNatsCredsFile
 import kotlinx.coroutines.*
-import org.json.JSONObject
 import java.time.LocalDateTime
+import java.util.Date
+
 
 class MainActivity : AppCompatActivity() {
 
@@ -32,6 +34,20 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main) // XML provided below
+//        val credsFile = createNatsCredsFile(this, Utils.API_KEY, Utils.SECRET_KEY)
+//        realtime = Realtime(this, Utils.API_KEY, Utils.SECRET_KEY)
+//
+//        realtime.init(
+//            staging = false,
+//            opts = mapOf("debug" to true)
+//        )
+//
+//        lifecycleScope.launch {
+//            realtime.connect(credsFile.absolutePath)
+//            realtime.on("mytopic") { msg -> Log.d("RealtimeTest", "Received: $msg") }
+//            realtime.publish("mytopic", "Hello Krupa!!")
+//        }
+
 
         // Bind views
         connectBtn = findViewById(R.id.connectBtn)
@@ -65,7 +81,8 @@ class MainActivity : AppCompatActivity() {
         subscribeBtn.setOnClickListener {
             val topic = topicInput.text.toString().trim()
             if (topic.isNotEmpty()) {
-                scope.launch {
+                lifecycleScope.launch {
+                    println("Topic:  "  + topic)
                     realtime.on(topic) { msg ->
                         appendLog("Message received: $msg")
                     }
@@ -101,10 +118,12 @@ class MainActivity : AppCompatActivity() {
             val topic = topicInput.text.toString().trim()
             if (topic.isNotEmpty()) {
                 scope.launch {
+                    val fiveHoursAgoInMillis = System.currentTimeMillis() - (5 * 60 * 60 * 1000)
+
                     val history = realtime.history(
                         topic = topic,
-                        start = LocalDateTime.now().minusHours(1),
-                        end = LocalDateTime.now()
+                        start = fiveHoursAgoInMillis,
+                        end = System.currentTimeMillis()
                     )
 
                     println("History: " + history)
@@ -131,7 +150,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         scope.cancel()
-        realtime.close()
+//        realtime.close()
     }
 
 }

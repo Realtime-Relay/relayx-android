@@ -4,11 +4,25 @@ import android.content.Context
 import android.util.Log
 import com.relay.realtime.models.JsonWriter
 import com.relay.realtime.models.Pojo
-import io.nats.client.*
-import io.nats.client.api.*
+import io.nats.client.Connection
+import io.nats.client.ConnectionListener
+import io.nats.client.Dispatcher
+import io.nats.client.JetStream
+import io.nats.client.JetStreamApiException
+import io.nats.client.Message
+import io.nats.client.Nats
+import io.nats.client.Options
+import io.nats.client.PullSubscribeOptions
+import io.nats.client.PushSubscribeOptions
+import io.nats.client.api.AckPolicy
+import io.nats.client.api.ConsumerConfiguration
+import io.nats.client.api.DeliverPolicy
+import io.nats.client.api.StorageType
+import io.nats.client.api.StreamConfiguration
 import io.nats.client.impl.NatsMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -17,12 +31,14 @@ import org.msgpack.core.MessagePack
 import org.msgpack.core.MessageUnpacker
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneOffset
-import java.util.*
+import java.util.Collections
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicBoolean
@@ -46,6 +62,8 @@ class Realtime(private val context: Context, private val apiKey: String, private
     private val subscribedTopics = CopyOnWriteArraySet<String>()
     private val consumers = ConcurrentHashMap<String, Dispatcher>()
     private val offlineMessages = Collections.synchronizedList(mutableListOf<MutableMap<String, Any?>>())
+    private val listeners = ConcurrentHashMap<String, (JSONObject) -> Unit>()
+    private val subscriptions = ConcurrentHashMap<String, Dispatcher>()
 
     private val reservedTopics = setOf(
         "CONNECTED", "RECONNECT", "MESSAGE_RESEND", "DISCONNECTED", "RECONNECTING", "RECONNECTED", "RECONN_FAIL"
@@ -57,22 +75,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         debug = opts["debug"] as? Boolean ?: false
     }
 
-    fun copyAssetToCache(context: Context, assetFileName: String): String {
-        val file = File(context.cacheDir, assetFileName)
-        if (!file.exists()) {
-            context.assets.open(assetFileName).use { input ->
-                FileOutputStream(file).use { output ->
-                    input.copyTo(output)
-                }
-            }
-        }
-        return file.absolutePath
-    }
-
-
     suspend fun connect(filePath: String) = withContext(Dispatchers.IO) {
-//        val credsPath = copyAssetToCache(context, filePath)
-
         val builder = Options.Builder()
             .authHandler(Nats.credentials(filePath))
             .noEcho()
@@ -83,6 +86,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
                 when (type) {
                     ConnectionListener.Events.CONNECTED -> {
                         println("Connected")
+                        emitSdk("CONNECTED", "CONNECTED")
                     }
                     ConnectionListener.Events.RECONNECTED -> {
                         emitSdk("RECONNECTED", "RECONNECTED")
@@ -110,7 +114,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         emitSdk("CONNECTED", "CONNECTED")
 
         println("Getnamespace: " + getNamespace())
-        subscribeToTopics()
+//        subscribeToTopics()
     }
 
     suspend fun publish(topic: String, message: Any): Boolean = withContext(Dispatchers.IO) {
@@ -128,7 +132,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
             put("id", UUID.randomUUID().toString())
             put("room", topic)
             put("message", message)
-            put("start", Instant.now().epochSecond)
+            put("start", System.currentTimeMillis() )
         }
 
         val packer: MessageBufferPacker = MessagePack.newDefaultBufferPacker()
@@ -149,49 +153,60 @@ class Realtime(private val context: Context, private val apiKey: String, private
         }
     }
 
-    suspend fun on(topic: String, listener: (String) -> Unit) = withContext(Dispatchers.IO) {
+    fun on(topic: String, listener: (JSONObject) -> Unit) {
         validateTopic(topic)
-        val finalTopic = finalTopic(topic)
+        listeners[topic] = listener
+        val finalTopic = "${getNamespace()}.$topic"
+        // Implementation for ephemeral consumer subscribing with listener callback goes here
 
-        println("finalTopic: " + finalTopic)
-        val config = ConsumerConfiguration.builder()
-            .filterSubject(finalTopic)
-            .ackPolicy(AckPolicy.Explicit)
-            .deliverPolicy(DeliverPolicy.New)
-            .build()
+        if (natsConnection != null && natsConnection?.status == Connection.Status.CONNECTED) {
+            val consumerConfig = ConsumerConfiguration.builder()
+                .filterSubject(finalTopic)
+                .ackPolicy(AckPolicy.Explicit)
+                .deliverPolicy(DeliverPolicy.New)
+                .build()
 
-        val options = PushSubscribeOptions.builder()
-            .configuration(config)
-            .build()
+            val sub = jetStream?.subscribe(finalTopic, PushSubscribeOptions.builder()
+                .configuration(consumerConfig)
+                .durable(UUID.randomUUID().toString())
+                .build())
 
-        val sub = jetStream?.subscribe(finalTopic, options) ?: return@withContext
 
-        println("Sub: " + sub.consumerInfo)
-        println("natsConnection: " + natsConnection)
-        val dispatcher = natsConnection?.createDispatcher { msg ->
-            println("message: " + natsConnection)
-            val unpacker: MessageUnpacker = MessagePack.newDefaultUnpacker(msg.data)
-            val bytes = unpacker.readPayload(msg.data.size)
-            val json = JSONObject(String(bytes, StandardCharsets.UTF_8))
-            unpacker.close()
+            GlobalScope.launch(Dispatchers.IO) {
+                while (true) {
+                    try {
+                        val msg = sub?.nextMessage(Duration.ofSeconds(5)) ?: continue
 
-            println("Json: " + json)
-            if (json.optString("client_id") != clientId && json.optString("room") == topic) {
-                listener(json.toString())
+                        val json = JSONObject(String(msg.data))
+                        val msgClientId = json.optString("client_id")
+                        val room = json.optString("room")
+
+                        if (msgClientId != natsConnection?.serverInfo?.clientId.toString() && listeners.containsKey(room)) {
+                            msg.ack()
+
+                            listeners[room]?.let {
+                                it(JSONObject().apply {
+                                    put("id", json.getString("id"))
+                                    put("message", json.get("message"))
+                                })
+                            }
+                        }
+                    } catch (e: Exception) {
+                        if (debug) Log.e("RealtimeSDK", "Error handling message: ${e.message}")
+                    }
+                }
             }
-            msg.ack()
-        } ?: return@withContext
 
-        natsConnection?.flush(Duration.ofSeconds(1))
-
-        consumers[topic] = dispatcher
-        subscribedTopics.add(topic)
-        sdkListeners[topic] = listener
+        }
     }
 
     fun off(topic: String): Boolean {
         validateTopic(topic)
+        listeners.remove(topic)
+
         return consumers.remove(topic)?.let {
+
+//            subscriptions.remove(topic)?.cancel()
             it.unsubscribe(finalTopic(topic))
             subscribedTopics.remove(topic)
             sdkListeners.remove(topic)
@@ -199,18 +214,18 @@ class Realtime(private val context: Context, private val apiKey: String, private
         } ?: false
     }
 
-    suspend fun history(topic: String, start: LocalDateTime, end: LocalDateTime?): List<String> = withContext(Dispatchers.IO) {
+    suspend fun history(topic: String, start: Long, end: Long?): List<String> = withContext(Dispatchers.IO) {
         validateTopic(topic)
 
         println("Connection: " +isConnected.get())
         requireNotNull(start) { "Start date cannot be null" }
-        if (end != null && end.isBefore(start)) throw IllegalArgumentException("End date before start")
+        if (end != null && end < (start)) throw IllegalArgumentException("End date before start")
         if (!isConnected.get()) return@withContext emptyList()
 
         val finalTopic = finalTopic(topic)
-        val from = start.toEpochSecond(ZoneOffset.UTC)
-        val to = (end ?: LocalDateTime.now()).toEpochSecond(ZoneOffset.UTC)
+
         val result = mutableListOf<String>()
+        println("finalTopic: " + finalTopic)
 
         val config = ConsumerConfiguration.builder()
             .filterSubject(finalTopic)
@@ -222,14 +237,26 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
         sub?.pull(100)
         val fetched = sub?.fetch(100, Duration.ofSeconds(10)) ?: return@withContext result
-
+        println("sub: "  + sub)
+        println("Fetched: "  + fetched)
         for (msg in fetched) {
             val unpacker: MessageUnpacker = MessagePack.newDefaultUnpacker(msg.data)
             val bytes = unpacker.readPayload(msg.data.size)
+            println("bytes: " + bytes)
             unpacker.close()
             val json = JSONObject(String(bytes, StandardCharsets.UTF_8))
+            println("json: " + json)
+
             val ts = json.optLong("start")
-            if (ts in from..to) result.add(json.toString())
+            println("ts: " + ts)
+            println("from: " + start)
+            println("to: " + end)
+            println("c1: " + (start < ts))
+            println("c2: " + (end ?: 0 > ts))
+            if (start < ts && (end ?: 0) > ts) {
+                result.add(json.toString())
+                println("Added")
+            }
         }
         result
     }
@@ -273,17 +300,15 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
     private fun ensureStreamExists(topic: String) {
         val streamName = "stream_$topic"
+
+        println("streamName: " + streamName)
         try {
-            val jsm = natsConnection?.jetStreamManagement() ?: return
-            jsm.getStreamInfo(streamName)
-        } catch (e: JetStreamApiException) {
-            val config = StreamConfiguration.builder()
-                .name(streamName)
-                .subjects(finalTopic(topic))
-                .storageType(StorageType.File)
-                .build()
-            natsConnection?.jetStreamManagement()?.addStream(config)
-        }
+            natsConnection?.jetStreamManagement()?.addStream(StreamConfiguration.builder()
+                .name("stream_$streamName")
+                .subjects(listOf(streamName))
+                .storageType(StorageType.Memory)
+                .build())
+        } catch (_: Exception) {}
     }
 
     private fun getPojo(): Pojo {
