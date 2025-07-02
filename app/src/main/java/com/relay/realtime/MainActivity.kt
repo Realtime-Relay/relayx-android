@@ -34,20 +34,6 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main) // XML provided below
-//        val credsFile = createNatsCredsFile(this, Utils.API_KEY, Utils.SECRET_KEY)
-//        realtime = Realtime(this, Utils.API_KEY, Utils.SECRET_KEY)
-//
-//        realtime.init(
-//            staging = false,
-//            opts = mapOf("debug" to true)
-//        )
-//
-//        lifecycleScope.launch {
-//            realtime.connect(credsFile.absolutePath)
-//            realtime.on("mytopic") { msg -> Log.d("RealtimeTest", "Received: $msg") }
-//            realtime.publish("mytopic", "Hello Krupa!!")
-//        }
-
 
         // Bind views
         connectBtn = findViewById(R.id.connectBtn)
@@ -82,7 +68,6 @@ class MainActivity : AppCompatActivity() {
             val topic = topicInput.text.toString().trim()
             if (topic.isNotEmpty()) {
                 lifecycleScope.launch {
-                    println("Topic:  "  + topic)
                     realtime.on(topic) { msg ->
                         appendLog("Message received: $msg")
                     }
@@ -107,8 +92,6 @@ class MainActivity : AppCompatActivity() {
             if (topic.isNotEmpty() && message.isNotEmpty()) {
                 scope.launch {
                     val success = realtime.publish(topic, message)
-
-                    println("Success: " + success)
                     appendLog("Message published: $success")
                 }
             }
@@ -125,8 +108,6 @@ class MainActivity : AppCompatActivity() {
                         start = fiveHoursAgoInMillis,
                         end = System.currentTimeMillis()
                     )
-
-                    println("History: " + history)
                     appendLog("History:\n" + history.joinToString("\n"))
                 }
             }
@@ -150,7 +131,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         scope.cancel()
-//        realtime.close()
+        realtime.close()
     }
 
 }

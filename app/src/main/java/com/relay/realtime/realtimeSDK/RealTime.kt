@@ -85,7 +85,6 @@ class Realtime(private val context: Context, private val apiKey: String, private
             .connectionListener { _, type ->
                 when (type) {
                     ConnectionListener.Events.CONNECTED -> {
-                        println("Connected")
                         emitSdk("CONNECTED", "CONNECTED")
                     }
                     ConnectionListener.Events.RECONNECTED -> {
@@ -112,9 +111,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         }
 
         emitSdk("CONNECTED", "CONNECTED")
-
-        println("Getnamespace: " + getNamespace())
-//        subscribeToTopics()
+    //        subscribeToTopics()
     }
 
     suspend fun publish(topic: String, message: Any): Boolean = withContext(Dispatchers.IO) {
@@ -124,7 +121,6 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
         val finalTopic = finalTopic(topic)
 
-        println("finalTopic: " + finalTopic)
         ensureStreamExists(topic)
 
         val json = JSONObject().apply {
@@ -217,7 +213,6 @@ class Realtime(private val context: Context, private val apiKey: String, private
     suspend fun history(topic: String, start: Long, end: Long?): List<String> = withContext(Dispatchers.IO) {
         validateTopic(topic)
 
-        println("Connection: " +isConnected.get())
         requireNotNull(start) { "Start date cannot be null" }
         if (end != null && end < (start)) throw IllegalArgumentException("End date before start")
         if (!isConnected.get()) return@withContext emptyList()
@@ -225,7 +220,6 @@ class Realtime(private val context: Context, private val apiKey: String, private
         val finalTopic = finalTopic(topic)
 
         val result = mutableListOf<String>()
-        println("finalTopic: " + finalTopic)
 
         val config = ConsumerConfiguration.builder()
             .filterSubject(finalTopic)
@@ -237,25 +231,18 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
         sub?.pull(100)
         val fetched = sub?.fetch(100, Duration.ofSeconds(10)) ?: return@withContext result
-        println("sub: "  + sub)
-        println("Fetched: "  + fetched)
+
+
         for (msg in fetched) {
             val unpacker: MessageUnpacker = MessagePack.newDefaultUnpacker(msg.data)
             val bytes = unpacker.readPayload(msg.data.size)
-            println("bytes: " + bytes)
+
             unpacker.close()
             val json = JSONObject(String(bytes, StandardCharsets.UTF_8))
-            println("json: " + json)
 
             val ts = json.optLong("start")
-            println("ts: " + ts)
-            println("from: " + start)
-            println("to: " + end)
-            println("c1: " + (start < ts))
-            println("c2: " + (end ?: 0 > ts))
             if (start < ts && (end ?: 0) > ts) {
                 result.add(json.toString())
-                println("Added")
             }
         }
         result
@@ -301,7 +288,6 @@ class Realtime(private val context: Context, private val apiKey: String, private
     private fun ensureStreamExists(topic: String) {
         val streamName = "stream_$topic"
 
-        println("streamName: " + streamName)
         try {
             natsConnection?.jetStreamManagement()?.addStream(StreamConfiguration.builder()
                 .name("stream_$streamName")
