@@ -55,6 +55,11 @@ dependencies {
     implementation("com.fasterxml.jackson.core:jackson-databind:2.13.2")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.13.2")
 
+
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.0")
+    implementation("org.msgpack:jackson-dataformat-msgpack:0.9.9") // latest Jan 2025
+
+
     implementation("com.google.code.gson:gson:2.10.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.1")
     implementation("org.msgpack:msgpack-core:0.9.0")

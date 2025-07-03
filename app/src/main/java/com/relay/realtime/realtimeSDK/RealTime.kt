@@ -1,7 +1,8 @@
 package com.relay.realtime.realtimeSDK
 
-import android.content.Context
 import android.util.Log
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.relay.realtime.models.JsonWriter
 import com.relay.realtime.models.Pojo
 import io.nats.client.Connection
@@ -16,8 +17,7 @@ import io.nats.client.PushSubscribeOptions
 import io.nats.client.api.AckPolicy
 import io.nats.client.api.ConsumerConfiguration
 import io.nats.client.api.DeliverPolicy
-import io.nats.client.api.StorageType
-import io.nats.client.api.StreamConfiguration
+import io.nats.client.api.ReplayPolicy
 import io.nats.client.impl.NatsMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,6 +28,7 @@ import org.json.JSONObject
 import org.msgpack.core.MessageBufferPacker
 import org.msgpack.core.MessagePack
 import org.msgpack.core.MessageUnpacker
+import org.msgpack.jackson.dataformat.MessagePackFactory
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.util.Collections
@@ -35,6 +36,17 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicBoolean
+
+
+//put("client_id", clientId)
+//put("id", UUID.randomUUID().toString())
+//put("room", topic)
+//put("message", message)
+//put("start", System.currentTimeMillis() )
+//
+//@Serializable
+data class MessageInfo(val client_id: String, val id: String, val room: String, val message: String, val start: Long)
+
 
 
 class Realtime(private val apiKey: String, private val secretKey: String) {
@@ -58,6 +70,7 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
     private val listeners = ConcurrentHashMap<String, (JSONObject) -> Unit>()
     private val subscriptions = ConcurrentHashMap<String, Dispatcher>()
 
+    private lateinit var mapper: ObjectMapper
     private val reservedTopics = setOf(
         "CONNECTED", "RECONNECT", "MESSAGE_RESEND", "DISCONNECTED", "RECONNECTING", "RECONNECTED", "RECONN_FAIL"
     )
@@ -66,6 +79,9 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
         requireNotNull(opts) { "Options map must not be null" }
         this.staging = staging
         debug = opts["debug"] as? Boolean ?: false
+
+        mapper = ObjectMapper(MessagePackFactory())
+            .registerKotlinModule() // adds data-class & null-safety support
     }
 
     suspend fun connect(filePath: String) = withContext(Dispatchers.IO) {
@@ -104,7 +120,7 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
         }
 
         emitSdk("CONNECTED", "CONNECTED")
-    //        subscribeToTopics()
+            subscribeToTopics()
     }
 
     suspend fun publish(topic: String, message: Any): Boolean = withContext(Dispatchers.IO) {
@@ -114,18 +130,18 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
 
         val finalTopic = finalTopic(topic)
 
-        ensureStreamExists(topic)
+        var sendMessage = MessageInfo(
+            client_id = clientId,
+            id = UUID.randomUUID().toString(),
+            room = topic,
+            message = message.toString(),
+            start = System.currentTimeMillis()
+        )
 
-        val json = JSONObject().apply {
-            put("client_id", clientId)
-            put("id", UUID.randomUUID().toString())
-            put("room", topic)
-            put("message", message)
-            put("start", System.currentTimeMillis() )
-        }
+        val packed: ByteArray = mapper.writeValueAsBytes(sendMessage) // ➜ send/store
 
         val packer: MessageBufferPacker = MessagePack.newDefaultBufferPacker()
-        packer.writePayload(json.toString().toByteArray(StandardCharsets.UTF_8))
+        packer.writePayload(packed)
         packer.close()
 
         if (isConnected.get()) {
@@ -153,6 +169,7 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
                 .filterSubject(finalTopic)
                 .ackPolicy(AckPolicy.Explicit)
                 .deliverPolicy(DeliverPolicy.New)
+                .replayPolicy(ReplayPolicy.Instant)
                 .build()
 
             val sub = jetStream?.subscribe(finalTopic, PushSubscribeOptions.builder()
@@ -166,17 +183,19 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
                     try {
                         val msg = sub?.nextMessage(Duration.ofSeconds(5)) ?: continue
 
-                        val json = JSONObject(String(msg.data))
-                        val msgClientId = json.optString("client_id")
-                        val room = json.optString("room")
+                        val unpacked: MessageInfo = mapper.readValue(msg.data, MessageInfo::class.java) // ➜ back to object
+
+                        val msgClientId = unpacked.client_id
+                        val room = unpacked.room
 
                         if (msgClientId != natsConnection?.serverInfo?.clientId.toString() && listeners.containsKey(room)) {
                             msg.ack()
 
+                            subscribedTopics.add(topic)
                             listeners[room]?.let {
                                 it(JSONObject().apply {
-                                    put("id", json.getString("id"))
-                                    put("message", json.get("message"))
+                                    put("id", unpacked.id)
+                                    put("message", unpacked.message)
                                 })
                             }
                         }
@@ -203,7 +222,7 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
         } ?: false
     }
 
-    suspend fun history(topic: String, start: Long, end: Long?): List<String> = withContext(Dispatchers.IO) {
+    suspend fun history(topic: String, start: Long, end: Long?): List<MessageInfo> = withContext(Dispatchers.IO) {
         validateTopic(topic)
 
         requireNotNull(start) { "Start date cannot be null" }
@@ -212,12 +231,13 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
 
         val finalTopic = finalTopic(topic)
 
-        val result = mutableListOf<String>()
+        val result = mutableListOf<MessageInfo>()
 
         val config = ConsumerConfiguration.builder()
             .filterSubject(finalTopic)
             .ackPolicy(AckPolicy.None)
             .deliverPolicy(DeliverPolicy.All)
+            .replayPolicy(ReplayPolicy.Instant)
             .build()
         val opts = PullSubscribeOptions.builder().configuration(config).build()
         val sub = jetStream?.subscribe(finalTopic, opts)
@@ -225,17 +245,10 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
         sub?.pull(100)
         val fetched = sub?.fetch(100, Duration.ofSeconds(10)) ?: return@withContext result
 
-
         for (msg in fetched) {
-            val unpacker: MessageUnpacker = MessagePack.newDefaultUnpacker(msg.data)
-            val bytes = unpacker.readPayload(msg.data.size)
-
-            unpacker.close()
-            val json = JSONObject(String(bytes, StandardCharsets.UTF_8))
-
-            val ts = json.optLong("start")
-            if (start < ts && (end ?: 0) > ts) {
-                result.add(json.toString())
+            val unpacked: MessageInfo = mapper.readValue(msg.data, MessageInfo::class.java) // ➜ back to object
+            if (start < unpacked.start && (end ?: 0) > unpacked.start) {
+                result.add(unpacked)
             }
         }
         result
@@ -276,18 +289,6 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
 
     private fun emitSdk(topic: String, message: String) {
         sdkListeners[topic]?.invoke(message)
-    }
-
-    private fun ensureStreamExists(topic: String) {
-        val streamName = "stream_$topic"
-
-        try {
-            natsConnection?.jetStreamManagement()?.addStream(StreamConfiguration.builder()
-                .name("stream_$streamName")
-                .subjects(listOf(streamName))
-                .storageType(StorageType.Memory)
-                .build())
-        } catch (_: Exception) {}
     }
 
     private fun getPojo(): Pojo {
@@ -331,11 +332,11 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
         for (topic in subscribedTopics) {
             try {
                 val finalTopic = finalTopic(topic)
-                ensureStreamExists(topic)
                 val config = ConsumerConfiguration.builder()
                     .filterSubject(finalTopic)
                     .ackPolicy(AckPolicy.Explicit)
                     .deliverPolicy(DeliverPolicy.New)
+                    .replayPolicy(ReplayPolicy.Instant)
                     .build()
                 val options = PushSubscribeOptions.builder().configuration(config).build()
                 val dispatcher = natsConnection?.createDispatcher { msg ->

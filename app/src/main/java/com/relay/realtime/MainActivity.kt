@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.google.gson.Gson
 import com.relay.realtime.realtimeSDK.Realtime
 import com.relay.realtime.realtimeSDK.Utils
 import com.relay.realtime.realtimeSDK.Utils.createNatsCredsFile
@@ -104,7 +105,11 @@ class MainActivity : AppCompatActivity() {
                         start = fiveHoursAgoInMillis,
                         end = System.currentTimeMillis()
                     )
-                    appendLog("History:\n" + history.joinToString("\n"))
+
+                    val gson = Gson()
+                    val jsonString = gson.toJson(history)
+
+                    appendLog("History:\n" + jsonString)
                 }
             }
         }
