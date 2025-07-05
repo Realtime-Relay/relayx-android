@@ -222,7 +222,7 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
         } ?: false
     }
 
-    suspend fun history(topic: String, start: Long, end: Long?): List<MessageInfo> = withContext(Dispatchers.IO) {
+    suspend fun history(topic: String, start: Long, end: Long?): List<Any> = withContext(Dispatchers.IO) {
         validateTopic(topic)
 
         requireNotNull(start) { "Start date cannot be null" }
@@ -231,7 +231,7 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
 
         val finalTopic = finalTopic(topic)
 
-        val result = mutableListOf<MessageInfo>()
+        val result = mutableListOf<Any>()
 
         val config = ConsumerConfiguration.builder()
             .filterSubject(finalTopic)
@@ -248,7 +248,7 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
         for (msg in fetched) {
             val unpacked: MessageInfo = mapper.readValue(msg.data, MessageInfo::class.java) // ➜ back to object
             if (start < unpacked.start && (end ?: System.currentTimeMillis()) > unpacked.start) {
-                result.add(unpacked)
+                result.add(unpacked.message)
             }
         }
         result
