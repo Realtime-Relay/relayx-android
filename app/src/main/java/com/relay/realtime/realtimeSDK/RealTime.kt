@@ -232,8 +232,10 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
         val finalTopic = finalTopic(topic)
 
         val result = mutableListOf<Any>()
+        val consumerName = "history_consumer_${UUID.randomUUID()}"
 
         val config = ConsumerConfiguration.builder()
+            .name(consumerName)
             .filterSubject(finalTopic)
             .ackPolicy(AckPolicy.None)
             .deliverPolicy(DeliverPolicy.All)
@@ -242,13 +244,38 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
         val opts = PullSubscribeOptions.builder().configuration(config).build()
         val sub = jetStream?.subscribe(finalTopic, opts)
 
-        sub?.pull(100)
-        val fetched = sub?.fetch(100, Duration.ofSeconds(10)) ?: return@withContext result
+        try {
+            sub?.pull(100)
+            val fetched = sub?.fetch(100, Duration.ofSeconds(10)) ?: return@withContext result
 
-        for (msg in fetched) {
-            val unpacked: MessageInfo = mapper.readValue(msg.data, MessageInfo::class.java) // ➜ back to object
-            if (start < unpacked.start && (end ?: System.currentTimeMillis()) > unpacked.start) {
-                result.add(unpacked.message)
+            for (msg in fetched) {
+                val unpacked: MessageInfo = mapper.readValue(msg.data, MessageInfo::class.java) // ➜ back to object
+                if (start < unpacked.start && (end ?: System.currentTimeMillis()) > unpacked.start) {
+                    result.add(unpacked.message)
+                }
+            }
+        } finally {
+            try {
+                val jsm = natsConnection?.jetStreamManagement()
+
+                val streamName = jsm?.streamNames?.firstOrNull { stream ->
+                    try {
+                        val info = jsm.getStreamInfo(stream)
+                        info.config.subjects.any { subject -> finalTopic.contains(subject) }
+
+                        true
+                    } catch (e: Exception) {
+                        false
+                    }
+                }
+
+                if (streamName != null) {
+                    jsm.deleteConsumer(streamName, consumerName)
+                } else if (debug) {
+                    Log.e("Realtime", "Stream not found for subject: $finalTopic")
+                }
+            } catch (e: Exception) {
+                if (debug) Log.e("Realtime", "Failed to delete consumer: ${e.message}")
             }
         }
         result
