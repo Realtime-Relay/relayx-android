@@ -247,7 +247,7 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
 
         for (msg in fetched) {
             val unpacked: MessageInfo = mapper.readValue(msg.data, MessageInfo::class.java) // ➜ back to object
-            if (start < unpacked.start && (end ?: 0) > unpacked.start) {
+            if (start < unpacked.start && (end ?: System.currentTimeMillis()) > unpacked.start) {
                 result.add(unpacked)
             }
         }
