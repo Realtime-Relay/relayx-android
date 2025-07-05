@@ -171,6 +171,8 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
     fun on(topic: String, listener: (JSONObject) -> Unit) {
         validateTopic(topic)
+
+        if (subscribedTopics.contains(topic)) return
         listeners[topic] = listener
 
         if (natsConnection != null && natsConnection?.status == Connection.Status.CONNECTED) {
