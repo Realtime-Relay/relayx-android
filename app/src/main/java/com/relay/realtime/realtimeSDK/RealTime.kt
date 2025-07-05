@@ -45,7 +45,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 //put("start", System.currentTimeMillis() )
 //
 //@Serializable
-data class MessageInfo(val client_id: String, val id: String, val room: String, val message: String, val start: Long)
+data class MessageInfo(val client_id: String, val id: String, val room: String, val message: Any, val start: Long)
 
 
 
@@ -134,7 +134,7 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
             client_id = clientId,
             id = UUID.randomUUID().toString(),
             room = topic,
-            message = message.toString(),
+            message = message,
             start = System.currentTimeMillis()
         )
 
