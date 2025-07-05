@@ -170,49 +170,9 @@ class Realtime(private val context: Context, private val apiKey: String, private
     fun on(topic: String, listener: (JSONObject) -> Unit) {
         validateTopic(topic)
         listeners[topic] = listener
-        val finalTopic = "${namespace}.$topic"
-        // Implementation for ephemeral consumer subscribing with listener callback goes here
 
         if (natsConnection != null && natsConnection?.status == Connection.Status.CONNECTED) {
-            val consumerConfig = ConsumerConfiguration.builder()
-                .filterSubject(finalTopic)
-                .ackPolicy(AckPolicy.Explicit)
-                .deliverPolicy(DeliverPolicy.New)
-                .replayPolicy(ReplayPolicy.Instant)
-                .build()
-
-            val sub = jetStream?.subscribe(finalTopic, PushSubscribeOptions.builder()
-                .configuration(consumerConfig)
-                .build())
-
-
-            GlobalScope.launch(Dispatchers.IO) {
-                while (true) {
-                    try {
-                        val msg = sub?.nextMessage(Duration.ofSeconds(5)) ?: continue
-
-                        val unpacked: MessageInfo = mapper.readValue(msg.data, MessageInfo::class.java) // ➜ back to object
-
-                        val msgClientId = unpacked.client_id
-                        val room = unpacked.room
-
-                        if (msgClientId != natsConnection?.serverInfo?.clientId.toString() && listeners.containsKey(room)) {
-                            msg.ack()
-
-                            subscribedTopics.add(topic)
-                            listeners[room]?.let {
-                                it(JSONObject().apply {
-                                    put("id", unpacked.id)
-                                    put("message", unpacked.message)
-                                })
-                            }
-                        }
-                    } catch (e: Exception) {
-                        if (debug) Log.e("RealtimeSDK", "Error handling message: ${e.message}")
-                    }
-                }
-            }
-
+            startConsumer(topic)
         }
     }
 
@@ -367,39 +327,41 @@ class Realtime(private val context: Context, private val apiKey: String, private
             return null
     }
 
+    private fun startConsumer(topic: String) {
+        val finalTopic = finalTopic(topic)
+        val consumerConfig = ConsumerConfiguration.builder()
+            .filterSubject(finalTopic)
+            .ackPolicy(AckPolicy.Explicit)
+            .deliverPolicy(DeliverPolicy.New)
+            .replayPolicy(ReplayPolicy.Instant)
+            .build()
+
+        val sub = jetStream?.subscribe(finalTopic, PushSubscribeOptions.builder().configuration(consumerConfig).build())
+
+        GlobalScope.launch(Dispatchers.IO) {
+            while (true) {
+                try {
+                    val msg = sub?.nextMessage(Duration.ofSeconds(5)) ?: continue
+                    val unpacked: MessageInfo = mapper.readValue(msg.data, MessageInfo::class.java)
+                    val msgClientId = unpacked.client_id
+                    val room = unpacked.room
+                    if (msgClientId != natsConnection?.serverInfo?.clientId.toString() && listeners.containsKey(room)) {
+                        msg.ack()
+                        listeners[room]?.invoke(JSONObject().apply {
+                            put("id", unpacked.id)
+                            put("message", unpacked.message)
+                        })
+                    }
+                } catch (e: Exception) {
+                    if (debug) Log.e("Realtime", "Error in consumer loop: ${e.message}")
+                }
+            }
+        }
+    }
+
     private fun subscribeToTopics() {
         for (topic in subscribedTopics) {
-            try {
-                val finalTopic = finalTopic(topic)
-                val config = ConsumerConfiguration.builder()
-                    .filterSubject(finalTopic)
-                    .ackPolicy(AckPolicy.Explicit)
-                    .deliverPolicy(DeliverPolicy.New)
-                    .replayPolicy(ReplayPolicy.Instant)
-                    .build()
-                val options = PushSubscribeOptions.builder().configuration(config).build()
-                val dispatcher = natsConnection?.createDispatcher { msg ->
-                    try {
-                        val unpacker = MessagePack.newDefaultUnpacker(msg.data)
-                        val bytes = unpacker.readPayload(msg.data.size)
-                        unpacker.close()
-                        val json = JSONObject(String(bytes, StandardCharsets.UTF_8))
-                        val message = JSONObject().apply {
-                            put("id", json.optString("id"))
-                            put("message", json.opt("message"))
-                        }
-                        msg.ack()
-                        sdkListeners[topic]?.invoke(message.toString())
-                    } catch (e: Exception) {
-                        msg.nak()
-                        if (debug) Log.e("Realtime", "Error in consumer callback: ${e.message}")
-                    }
-                } ?: continue
-                jetStream?.subscribe(finalTopic, options)
-                consumers[topic] = dispatcher
-            } catch (e: Exception) {
-                if (debug) Log.e("Realtime", "Failed to subscribe to topic '$topic': ${e.message}")
-            }
+            startConsumer(topic)
         }
     }
 }
