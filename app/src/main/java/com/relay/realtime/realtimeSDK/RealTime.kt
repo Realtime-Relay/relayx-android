@@ -63,6 +63,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     private var clientId: String = ""
     private var natsConnection: Connection? = null
     private var jetStream: JetStream? = null
+    private var namespace: String? = null
 
     private val isConnected = AtomicBoolean(false)
     private val sdkListeners = ConcurrentHashMap<String, (String) -> Unit>()
@@ -123,6 +124,8 @@ class Realtime(private val context: Context, private val apiKey: String, private
             isConnected.set(true)
         }
 
+        namespace = getNamespace()
+
         emitSdk("CONNECTED", "CONNECTED")
             subscribeToTopics()
     }
@@ -166,7 +169,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     fun on(topic: String, listener: (JSONObject) -> Unit) {
         validateTopic(topic)
         listeners[topic] = listener
-        val finalTopic = "${getNamespace()}.$topic"
+        val finalTopic = "${namespace}.$topic"
         // Implementation for ephemeral consumer subscribing with listener callback goes here
 
         if (natsConnection != null && natsConnection?.status == Connection.Status.CONNECTED) {
@@ -320,7 +323,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     }
 
     private fun finalTopic(topic: String): String =
-        "${getNamespace()}.$topic"
+        "${namespace}.$topic"
 
     private fun emitSdk(topic: String, message: String) {
         sdkListeners[topic]?.invoke(message)
