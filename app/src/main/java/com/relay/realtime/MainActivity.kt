@@ -42,16 +42,15 @@ class MainActivity : AppCompatActivity() {
         topicInput = findViewById(R.id.topicInput)
         messageInput = findViewById(R.id.messageInput)
         messageLog = findViewById(R.id.messageLog)
-        val credsFile = createNatsCredsFile(this, Utils.API_KEY, Utils.SECRET_KEY)
 
         // Init SDK
-        realtime = Realtime(Utils.API_KEY, Utils.SECRET_KEY)
+        realtime = Realtime(this, Utils.API_KEY, Utils.SECRET_KEY)
         realtime.init(staging = false, opts = mapOf("debug" to true))
 
         // Event handlers
         connectBtn.setOnClickListener {
             scope.launch {
-                realtime.connect(credsFile.absolutePath)
+                realtime.connect()
                 appendLog("Connected to Relay")
             }
         }

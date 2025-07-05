@@ -1,10 +1,12 @@
 package com.relay.realtime.realtimeSDK
 
+import android.content.Context
 import android.util.Log
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.relay.realtime.models.JsonWriter
 import com.relay.realtime.models.Pojo
+import com.relay.realtime.realtimeSDK.Utils.createNatsCredsFile
 import io.nats.client.Connection
 import io.nats.client.ConnectionListener
 import io.nats.client.Dispatcher
@@ -49,7 +51,7 @@ data class MessageInfo(val client_id: String, val id: String, val room: String, 
 
 
 
-class Realtime(private val apiKey: String, private val secretKey: String) {
+class Realtime(private val context: Context, private val apiKey: String, private val secretKey: String) {
 
     init {
         require(apiKey.isNotBlank()) { "apiKey must not be empty" }
@@ -84,9 +86,11 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
             .registerKotlinModule() // adds data-class & null-safety support
     }
 
-    suspend fun connect(filePath: String) = withContext(Dispatchers.IO) {
+    suspend fun connect() = withContext(Dispatchers.IO) {
+        val credsFile = createNatsCredsFile(context, Utils.API_KEY, Utils.SECRET_KEY)
+
         val builder = Options.Builder()
-            .authHandler(Nats.credentials(filePath))
+            .authHandler(Nats.credentials(credsFile.absolutePath))
             .noEcho()
             .maxReconnects(1200)
             .reconnectWait(Duration.ofMillis(1000))
