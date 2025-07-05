@@ -278,7 +278,7 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
     }
 
     private fun validateTopic(topic: String) {
-        require(topic.isNotBlank() && !topic.contains(" ") && !topic.contains("*")) { "Invalid topic" }
+        require(!topic.isNullOrBlank() && !topic.isNullOrEmpty() && topic.isNotBlank() && !topic.contains(" ") && !topic.contains("*")) { "Invalid topic" }
     }
 
     private fun validateMessage(msg: Any) {
