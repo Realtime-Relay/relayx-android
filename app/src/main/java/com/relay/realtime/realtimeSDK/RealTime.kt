@@ -125,6 +125,7 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
 
     suspend fun publish(topic: String, message: Any): Boolean = withContext(Dispatchers.IO) {
         validateTopic(topic)
+        validateEmptyMessage(message)
         validateMessage(message)
         if (reservedTopics.contains(topic)) throw IllegalArgumentException("Reserved SDK topic: $topic")
 
@@ -282,6 +283,10 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
 
     private fun validateMessage(msg: Any) {
         require(msg is String || msg is Number || msg is Map<*, *>) { "Message must be string, number or JSON" }
+    }
+
+    private fun validateEmptyMessage(msg: Any) {
+        require(!msg.toString().isNullOrEmpty() || !msg.toString().isNullOrBlank()) { "Message must not be null or empty" }
     }
 
     private fun finalTopic(topic: String): String =
