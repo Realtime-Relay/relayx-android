@@ -175,7 +175,6 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
 
             val sub = jetStream?.subscribe(finalTopic, PushSubscribeOptions.builder()
                 .configuration(consumerConfig)
-                .durable(UUID.randomUUID().toString())
                 .build())
 
 
