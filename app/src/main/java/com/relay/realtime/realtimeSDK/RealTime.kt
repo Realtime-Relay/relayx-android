@@ -70,6 +70,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         "CONNECTED", "RECONNECT", "MESSAGE_RESEND", "DISCONNECTED", "RECONNECTING", "RECONNECTED", "RECONN_FAIL"
     )
     private val ephemeralConsumers = ConcurrentHashMap<String, String>()
+    private val isReconnecting = AtomicBoolean(false)
 
 
     fun init(staging: Boolean, opts: Map<String, Any>?) {
@@ -96,11 +97,16 @@ class Realtime(private val context: Context, private val apiKey: String, private
                         emitSdk("CONNECTED", "CONNECTED")
                     }
                     ConnectionListener.Events.RECONNECTED -> {
+                        isReconnecting.set(false)
                         emitSdk("RECONNECTED", "RECONNECTED")
                         CoroutineScope(Dispatchers.IO).launch { resendOfflineMessages() }
                     }
                     ConnectionListener.Events.DISCONNECTED -> {
+                        if (isReconnecting.compareAndSet(false, true)) {
+                            emitSdk("RECONNECTING", "RECONNECTING")
+                        }
                         emitSdk("DISCONNECTED", "DISCONNECTED")
+
                         offlineMessages.clear()
                     }
                     else -> {}
