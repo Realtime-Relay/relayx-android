@@ -38,15 +38,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicBoolean
 
-
-//put("client_id", clientId)
-//put("id", UUID.randomUUID().toString())
-//put("room", topic)
-//put("message", message)
-//put("start", System.currentTimeMillis() )
-//
-//@Serializable
 data class MessageInfo(val client_id: String, val id: String, val room: String, val message: Any, val start: Long)
+data class ResendMessageInfo(val topic: String, val message: Any, val resent: Boolean)
 
 
 
@@ -129,7 +122,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
             subscribeToTopics()
     }
 
-    suspend fun publish(topic: String, message: Any): Boolean = withContext(Dispatchers.IO) {
+    suspend fun publish(topic: String, message: Any, isRentMessage: Boolean = false): Boolean = withContext(Dispatchers.IO) {
         validateTopic(topic)
         validateEmptyMessage(message)
         validateMessage(message)
@@ -137,13 +130,22 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
         val finalTopic = finalTopic(topic)
 
-        var sendMessage = MessageInfo(
-            client_id = clientId,
-            id = UUID.randomUUID().toString(),
-            room = topic,
-            message = message,
-            start = System.currentTimeMillis()
-        )
+        var sendMessage = if(isRentMessage) {
+            ResendMessageInfo(
+                topic = topic,
+                message = message,
+                resent = true
+            )
+        } else {
+             MessageInfo(
+                client_id = clientId,
+                id = UUID.randomUUID().toString(),
+                room = topic,
+                message = message,
+                start = System.currentTimeMillis()
+            )
+        }
+
 
         val packed: ByteArray = mapper.writeValueAsBytes(sendMessage) // ➜ send/store
 
@@ -301,7 +303,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         for (msg in offlineMessages) {
             val topic = msg["topic"] as? String ?: continue
             val content = msg["message"] ?: continue
-            val sent = publish(topic, content)
+            val sent = publish(topic, content, true)
             msg["resent"] = sent
             result.add(msg)
         }
