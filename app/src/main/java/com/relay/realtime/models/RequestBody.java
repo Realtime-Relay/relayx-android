@@ -4,7 +4,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
-public class Pojo {
+public class RequestBody {
     public String api_key;
     public Long l;
     public Boolean b;
@@ -15,8 +15,8 @@ public class Pojo {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        Pojo pojo = (Pojo) o;
-        return Objects.equals(api_key, pojo.api_key) && Objects.equals(l, pojo.l) && Objects.equals(b, pojo.b) && Objects.equals(strings, pojo.strings) && Arrays.equals(ints, pojo.ints);
+        RequestBody requestBody = (RequestBody) o;
+        return Objects.equals(api_key, requestBody.api_key) && Objects.equals(l, requestBody.l) && Objects.equals(b, requestBody.b) && Objects.equals(strings, requestBody.strings) && Arrays.equals(ints, requestBody.ints);
     }
 
     @Override

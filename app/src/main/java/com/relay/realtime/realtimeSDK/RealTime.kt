@@ -5,7 +5,7 @@ import android.util.Log
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.relay.realtime.models.JsonWriter
-import com.relay.realtime.models.Pojo
+import com.relay.realtime.models.RequestBody
 import com.relay.realtime.realtimeSDK.Utils.createNatsCredsFile
 import io.nats.client.Connection
 import io.nats.client.ConnectionListener
@@ -29,7 +29,6 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.msgpack.core.MessageBufferPacker
 import org.msgpack.core.MessagePack
-import org.msgpack.core.MessageUnpacker
 import org.msgpack.jackson.dataformat.MessagePackFactory
 import java.nio.charset.StandardCharsets
 import java.time.Duration
@@ -329,10 +328,10 @@ class Realtime(private val context: Context, private val apiKey: String, private
         sdkListeners[topic]?.invoke(message)
     }
 
-    private fun getPojo(): Pojo {
-        val ppub: Pojo = Pojo()
-        ppub.api_key = apiKey
-        return ppub
+    private fun getRequestBody(): RequestBody {
+        val requestBody: RequestBody = RequestBody()
+        requestBody.api_key = apiKey
+        return requestBody
     }
 
 
@@ -343,8 +342,8 @@ class Realtime(private val context: Context, private val apiKey: String, private
                 val requestJson = JSONObject()
                 requestJson.put("api_key", apiKey)
 
-                val originalPojo: Pojo? = getPojo()
-                val originalJson = JsonWriter.toJsonBytes(originalPojo)
+                val originalRequestBody: RequestBody? = getRequestBody()
+                val originalJson = JsonWriter.toJsonBytes(originalRequestBody)
 
                 val subject = "accounts.user.get_namespace"
                 val timeout = Duration.ofSeconds(20)
