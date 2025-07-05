@@ -115,7 +115,7 @@ class Realtime(private val apiKey: String, private val secretKey: String) {
 
         natsConnection = Nats.connect(builder.build()).also {
             jetStream = it.jetStream()
-            clientId = UUID.randomUUID().toString()
+            clientId = it.serverInfo.clientId.toString()
             isConnected.set(true)
         }
 
