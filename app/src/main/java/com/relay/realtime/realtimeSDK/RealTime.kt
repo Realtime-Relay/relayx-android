@@ -69,6 +69,8 @@ class Realtime(private val context: Context, private val apiKey: String, private
     private val reservedTopics = setOf(
         "CONNECTED", "RECONNECT", "MESSAGE_RESEND", "DISCONNECTED", "RECONNECTING", "RECONNECTED", "RECONN_FAIL"
     )
+    private val ephemeralConsumers = ConcurrentHashMap<String, String>()
+
 
     fun init(staging: Boolean, opts: Map<String, Any>?) {
         requireNotNull(opts) { "Options map must not be null" }
@@ -172,6 +174,9 @@ class Realtime(private val context: Context, private val apiKey: String, private
         listeners[topic] = listener
 
         if (natsConnection != null && natsConnection?.status == Connection.Status.CONNECTED) {
+            val consumerName = "consumer_${UUID.randomUUID()}"
+            ephemeralConsumers[topic] = consumerName
+
             startConsumer(topic)
         }
     }
@@ -179,16 +184,47 @@ class Realtime(private val context: Context, private val apiKey: String, private
     fun off(topic: String): Boolean {
         validateTopic(topic)
         listeners.remove(topic)
+        val removed = consumers.remove(topic)
+        val consumerName = ephemeralConsumers.remove(topic)
+        val finalTopic = finalTopic(topic)
 
-        return consumers.remove(topic)?.let {
+        if (consumerName != null) {
+            try {
+                val jsm = natsConnection?.jetStreamManagement()
+                val streamName = jsm?.streamNames?.firstOrNull { stream ->
+                    try {
+                        val info = jsm.getStreamInfo(stream)
+                        info.config.subjects.any { subject -> finalTopic.contains(subject) }
+                    } catch (e: Exception) {
+                        false
+                    }
+                }
+                if (streamName != null) {
+                    jsm?.deleteConsumer(streamName, consumerName)
+                }
+            } catch (e: Exception) {
+                if (debug) Log.e("Realtime", "Failed to delete ephemeral consumer: ${e.message}")
+            }
+        }
 
-//            subscriptions.remove(topic)?.cancel()
-            it.unsubscribe(finalTopic(topic))
-            subscribedTopics.remove(topic)
-            sdkListeners.remove(topic)
-            true
-        } ?: false
+        subscribedTopics.remove(topic)
+        sdkListeners.remove(topic)
+        return removed != null
     }
+
+//    fun off(topic: String): Boolean {
+//        validateTopic(topic)
+//        listeners.remove(topic)
+//
+//        return consumers.remove(topic)?.let {
+//
+////            subscriptions.remove(topic)?.cancel()
+//            it.unsubscribe(finalTopic(topic))
+//            subscribedTopics.remove(topic)
+//            sdkListeners.remove(topic)
+//            true
+//        } ?: false
+//    }
 
     suspend fun history(topic: String, start: Long, end: Long?): List<Any> = withContext(Dispatchers.IO) {
         validateTopic(topic)
