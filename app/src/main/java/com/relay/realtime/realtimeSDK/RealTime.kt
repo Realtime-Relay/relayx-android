@@ -22,6 +22,7 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -57,6 +58,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     private val reservedTopics = setOf("CONNECTED", "RECONNECT", "MESSAGE_RESEND", "DISCONNECTED", "RECONNECTING", "RECONNECTED", "RECONN_FAIL")
     private val ephemeralConsumers = ConcurrentHashMap<String, String>()
     private val isReconnecting = AtomicBoolean(false)
+    private val latencyHistory = CopyOnWriteArrayList<Map<String, Any>>()
 
     fun init(staging: Boolean, opts: Map<String, Any>?) {
         requireNotNull(opts) { "Options map must not be null" }
@@ -263,6 +265,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
                             put("id", unpacked.id)
                             put("message", unpacked.message)
                         })
+                        logLatency(unpacked.start)
                     }
                 } catch (e: Exception) {
                     if (debug) Log.e("Realtime", "Consumer error [$topic]: ${e.message}")
@@ -273,6 +276,40 @@ class Realtime(private val context: Context, private val apiKey: String, private
         }
         consumerJobs[topic] = job
     }
+
+    private fun logLatency(sentTime: Long) {
+        val receivedTime = System.currentTimeMillis()
+        val latency = receivedTime - sentTime
+        val timezone = TimeZone.getDefault().id
+
+        latencyHistory.add(mapOf("latency" to latency, "timestamp" to receivedTime))
+
+        if (latencyHistory.size >= 100) {
+            val payload = JSONObject().apply {
+                put("timezone", timezone)
+                put("history", latencyHistory.toList())
+            }
+
+            try {
+                val packed = mapper.writeValueAsBytes(payload)
+                val packer = MessagePack.newDefaultBufferPacker()
+                packer.writePayload(packed)
+                packer.close()
+
+                jetStream?.publish(
+                    NatsMessage.builder()
+                        .subject("accounts.user.log_latency")
+                        .data(packer.toByteArray())
+                        .build()
+                )
+            } catch (e: Exception) {
+                if (debug) Log.e("Realtime", "Failed to publish latency log: ${e.message}")
+            } finally {
+                latencyHistory.clear()
+            }
+        }
+    }
+
 
     private fun subscribeToTopics() {
         for (topic in subscribedTopics) {
@@ -319,7 +356,6 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
     private fun getNamespace(): JSONObject? {
         return try {
-            val requestJson = JSONObject().put("api_key", apiKey)
             val originalJson = JsonWriter.toJsonBytes(getRequestBody())
             val responseMsg = natsConnection?.request("accounts.user.get_namespace", originalJson, Duration.ofSeconds(20))
             val responseStr = String(responseMsg?.data ?: byteArrayOf(), StandardCharsets.UTF_8)
