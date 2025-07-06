@@ -197,22 +197,14 @@ class Realtime(private val context: Context, private val apiKey: String, private
         validateTopic(topic)
         listeners.remove(topic)
         val removed = consumers.remove(topic)
+
         val consumerName = ephemeralConsumers.remove(topic)
-        val finalTopic = finalTopic(topic)
 
         if (consumerName != null) {
             try {
                 val jsm = natsConnection?.jetStreamManagement()
-                val streamName = jsm?.streamNames?.firstOrNull { stream ->
-                    try {
-                        val info = jsm.getStreamInfo(stream)
-                        info.config.subjects.any { subject -> finalTopic.contains(subject) }
-                    } catch (e: Exception) {
-                        false
-                    }
-                }
-                if (streamName != null) {
-                    jsm?.deleteConsumer(streamName, consumerName)
+                if (namespace != null) {
+                    jsm?.deleteConsumer(namespace, consumerName)
                 }
             } catch (e: Exception) {
                 if (debug) Log.e("Realtime", "Failed to delete ephemeral consumer: ${e.message}")
@@ -224,19 +216,6 @@ class Realtime(private val context: Context, private val apiKey: String, private
         return removed != null
     }
 
-//    fun off(topic: String): Boolean {
-//        validateTopic(topic)
-//        listeners.remove(topic)
-//
-//        return consumers.remove(topic)?.let {
-//
-////            subscriptions.remove(topic)?.cancel()
-//            it.unsubscribe(finalTopic(topic))
-//            subscribedTopics.remove(topic)
-//            sdkListeners.remove(topic)
-//            true
-//        } ?: false
-//    }
 
     suspend fun history(topic: String, start: Long, end: Long?): List<Any> = withContext(Dispatchers.IO) {
         validateTopic(topic)
@@ -378,6 +357,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     private fun startConsumer(topic: String) {
         val finalTopic = finalTopic(topic)
         val consumerConfig = ConsumerConfiguration.builder()
+            .name(ephemeralConsumers[topic])
             .filterSubject(finalTopic)
             .ackPolicy(AckPolicy.Explicit)
             .deliverPolicy(DeliverPolicy.New)
