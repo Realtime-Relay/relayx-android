@@ -65,7 +65,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     private val consumers = ConcurrentHashMap<String, Dispatcher>()
     private val offlineMessages = Collections.synchronizedList(mutableListOf<MutableMap<String, Any?>>())
     private val listeners = ConcurrentHashMap<String, (JSONObject) -> Unit>()
-    private val subscriptions = ConcurrentHashMap<String, Dispatcher>()
+    private val isManuallyDisconnected = AtomicBoolean(false)
 
     private lateinit var mapper: ObjectMapper
     private val reservedTopics = setOf(
@@ -96,17 +96,23 @@ class Realtime(private val context: Context, private val apiKey: String, private
             .connectionListener { _, type ->
                 when (type) {
                     ConnectionListener.Events.CONNECTED -> {
+                        isManuallyDisconnected.set(false) // reset on connect
                         emitSdk("CONNECTED", "CONNECTED")
                     }
                     ConnectionListener.Events.RECONNECTED -> {
-                        isReconnecting.set(false)
-                        emitSdk("RECONNECTED", "RECONNECTED")
-                        CoroutineScope(Dispatchers.IO).launch { resendOfflineMessages() }
+                        if (!isManuallyDisconnected.get()) {
+                            isReconnecting.set(false)
+                            emitSdk("RECONNECTED", "RECONNECTED")
+                            CoroutineScope(Dispatchers.IO).launch { resendOfflineMessages() }
+                        }
                     }
                     ConnectionListener.Events.DISCONNECTED -> {
-                        if (isReconnecting.compareAndSet(false, true)) {
-                            emitSdk("RECONNECTING", "RECONNECTING")
+                        if (!isManuallyDisconnected.get()) {
+                            if (isReconnecting.compareAndSet(false, true)) {
+                                emitSdk("RECONNECTING", "RECONNECTING")
+                            }
                         }
+
                         emitSdk("DISCONNECTED", "DISCONNECTED")
 
                         offlineMessages.clear()
@@ -133,7 +139,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         }
 
         emitSdk("CONNECTED", "CONNECTED")
-            subscribeToTopics()
+        subscribeToTopics()
     }
 
     suspend fun publish(topic: String, message: Any): Boolean = withContext(Dispatchers.IO) {
@@ -277,6 +283,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
     fun close() {
         try {
+            isManuallyDisconnected.set(true)
             natsConnection?.close()
             isConnected.set(false)
         } catch (e: Exception) {
