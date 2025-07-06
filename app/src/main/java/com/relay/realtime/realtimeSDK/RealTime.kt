@@ -42,9 +42,6 @@ import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicBoolean
 
 data class MessageInfo(val client_id: String, val id: String, val room: String, val message: Any, val start: Long)
-data class ResendMessageInfo(val topic: String, val message: Any, val resent: Boolean)
-
-
 
 class Realtime(private val context: Context, private val apiKey: String, private val secretKey: String) {
 
@@ -150,27 +147,18 @@ class Realtime(private val context: Context, private val apiKey: String, private
     private fun CoroutineScope.sendOnlineOfflineMessage(
         topic: String,
         message: Any,
-        isResendMessage: Boolean = false
     ): Boolean {
         if (reservedTopics.contains(topic)) throw IllegalArgumentException("Reserved SDK topic: $topic")
 
         val finalTopic = finalTopic(topic)
 
-        var sendMessage = if(isResendMessage) {
-            ResendMessageInfo(
-                topic = topic,
-                message = message,
-                resent = true
-            )
-        } else {
-            MessageInfo(
-                client_id = clientId,
-                id = UUID.randomUUID().toString(),
-                room = topic,
-                message = message,
-                start = System.currentTimeMillis()
-            )
-        }
+        var sendMessage = MessageInfo(
+            client_id = clientId,
+            id = UUID.randomUUID().toString(),
+            room = topic,
+            message = message,
+            start = System.currentTimeMillis()
+        )
 
 
         val packed: ByteArray = mapper.writeValueAsBytes(sendMessage) // ➜ send/store
@@ -309,7 +297,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         for (msg in offlineMessages) {
             val topic = msg["topic"] as? String ?: continue
             val content = msg["message"] ?: continue
-            val sent = sendOnlineOfflineMessage(topic, content, true)
+            val sent = sendOnlineOfflineMessage(topic, content)
             msg["resent"] = sent
             result.add(msg)
         }
