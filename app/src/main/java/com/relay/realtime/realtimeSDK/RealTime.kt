@@ -85,7 +85,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     }
 
     suspend fun connect() = withContext(Dispatchers.IO) {
-        val credsFile = createNatsCredsFile(context, Utils.API_KEY, Utils.SECRET_KEY)
+        val credsFile = createNatsCredsFile(context, apiKey, secretKey)
 
         val builder = Options.Builder()
             .authHandler(Nats.credentials(credsFile.absolutePath))
