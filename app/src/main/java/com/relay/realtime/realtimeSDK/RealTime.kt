@@ -93,6 +93,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
                             if (isReconnecting.compareAndSet(false, true)) {
                                 emitSdk("RECONNECTING", "RECONNECTING")
                             }
+                            emitSdk("RECONNECT", "RECONNECTING")
                         }
                         emitSdk("DISCONNECTED", "DISCONNECTED")
                         offlineMessages.clear()
