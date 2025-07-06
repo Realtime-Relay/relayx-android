@@ -313,7 +313,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     }
 
     private fun validateEmptyMessage(msg: Any) {
-        require(!msg.toString().isNullOrEmpty() || !msg.toString().isNullOrBlank()) { "Message must not be null or empty" }
+        require(msg != null) { "Message must not be null or empty" }
     }
 
     private fun finalTopic(topic: String): String =
