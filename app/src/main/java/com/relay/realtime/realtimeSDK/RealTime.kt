@@ -343,7 +343,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     }
 
 
-    fun getNamespace(): JSONObject? {
+    private fun getNamespace(): JSONObject? {
         if(natsConnection != null) {
             natsConnection?.let {
 
