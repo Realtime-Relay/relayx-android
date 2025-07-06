@@ -7,25 +7,10 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.relay.realtime.models.JsonWriter
 import com.relay.realtime.models.RequestBody
 import com.relay.realtime.realtimeSDK.Utils.createNatsCredsFile
-import io.nats.client.Connection
-import io.nats.client.ConnectionListener
-import io.nats.client.Dispatcher
-import io.nats.client.JetStream
-import io.nats.client.Message
-import io.nats.client.Nats
-import io.nats.client.Options
-import io.nats.client.PullSubscribeOptions
-import io.nats.client.PushSubscribeOptions
-import io.nats.client.api.AckPolicy
-import io.nats.client.api.ConsumerConfiguration
-import io.nats.client.api.DeliverPolicy
-import io.nats.client.api.ReplayPolicy
+import io.nats.client.*
+import io.nats.client.api.*
 import io.nats.client.impl.NatsMessage
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
 import org.json.JSONObject
 import org.msgpack.core.MessageBufferPacker
 import org.msgpack.core.MessagePack
@@ -35,11 +20,11 @@ import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZonedDateTime
-import java.util.Collections
-import java.util.UUID
+import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicBoolean
+
 
 data class MessageInfo(val client_id: String, val id: String, val room: String, val message: Any, val start: Long)
 
@@ -63,25 +48,22 @@ class Realtime(private val context: Context, private val apiKey: String, private
     private val sdkListeners = ConcurrentHashMap<String, (Any) -> Unit>()
     private val subscribedTopics = CopyOnWriteArraySet<String>()
     private val consumers = ConcurrentHashMap<String, Dispatcher>()
+    private val consumerJobs = ConcurrentHashMap<String, Job>()
     private val offlineMessages = Collections.synchronizedList(mutableListOf<MutableMap<String, Any?>>())
     private val listeners = ConcurrentHashMap<String, (JSONObject) -> Unit>()
     private val isManuallyDisconnected = AtomicBoolean(false)
 
     private lateinit var mapper: ObjectMapper
-    private val reservedTopics = setOf(
-        "CONNECTED", "RECONNECT", "MESSAGE_RESEND", "DISCONNECTED", "RECONNECTING", "RECONNECTED", "RECONN_FAIL"
-    )
+    private val reservedTopics = setOf("CONNECTED", "RECONNECT", "MESSAGE_RESEND", "DISCONNECTED", "RECONNECTING", "RECONNECTED", "RECONN_FAIL")
     private val ephemeralConsumers = ConcurrentHashMap<String, String>()
     private val isReconnecting = AtomicBoolean(false)
-
 
     fun init(staging: Boolean, opts: Map<String, Any>?) {
         requireNotNull(opts) { "Options map must not be null" }
         this.staging = staging
         debug = opts["debug"] as? Boolean ?: false
 
-        mapper = ObjectMapper(MessagePackFactory())
-            .registerKotlinModule() // adds data-class & null-safety support
+        mapper = ObjectMapper(MessagePackFactory()).registerKotlinModule()
     }
 
     suspend fun connect() = withContext(Dispatchers.IO) {
@@ -96,7 +78,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
             .connectionListener { _, type ->
                 when (type) {
                     ConnectionListener.Events.CONNECTED -> {
-                        isManuallyDisconnected.set(false) // reset on connect
+                        isManuallyDisconnected.set(false)
                         emitSdk("CONNECTED", "CONNECTED")
                     }
                     ConnectionListener.Events.RECONNECTED -> {
@@ -112,9 +94,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
                                 emitSdk("RECONNECTING", "RECONNECTING")
                             }
                         }
-
                         emitSdk("DISCONNECTED", "DISCONNECTED")
-
                         offlineMessages.clear()
                     }
                     else -> {}
@@ -133,7 +113,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         }
 
         namespaceData = getNamespace()
-        if(namespaceData != null) {
+        if (namespaceData != null) {
             namespace = namespaceData?.optString("namespace")
             hash = namespaceData?.optString("hash")
         }
@@ -150,45 +130,28 @@ class Realtime(private val context: Context, private val apiKey: String, private
         if (reservedTopics.contains(topic)) throw IllegalArgumentException("Reserved SDK topic: $topic")
 
         val finalTopic = finalTopic(topic)
-
-        var sendMessage = MessageInfo(
-            client_id = clientId,
-            id = UUID.randomUUID().toString(),
-            room = topic,
-            message = message,
-            start = System.currentTimeMillis()
-        )
-
-
-        val packed: ByteArray = mapper.writeValueAsBytes(sendMessage) // ➜ send/store
-
+        val sendMessage = MessageInfo(client_id = clientId, id = UUID.randomUUID().toString(), room = topic, message = message, start = System.currentTimeMillis())
+        val packed: ByteArray = mapper.writeValueAsBytes(sendMessage)
         val packer: MessageBufferPacker = MessagePack.newDefaultBufferPacker()
         packer.writePayload(packed)
         packer.close()
 
         if (isConnected.get()) {
-            jetStream?.publish(
-                NatsMessage.builder()
-                    .subject(finalTopic)
-                    .data(packer.toByteArray())
-                    .build()
-            )
+            jetStream?.publish(NatsMessage.builder().subject(finalTopic).data(packer.toByteArray()).build())
             true
         } else {
             offlineMessages.add(mutableMapOf("topic" to topic, "message" to message, "resent" to false))
             false
-        }    }
+        }
+    }
 
     fun on(topic: String, listener: (JSONObject) -> Unit) {
         validateTopic(topic)
-
         if (subscribedTopics.contains(topic)) return
         listeners[topic] = listener
-
-        if (natsConnection != null && natsConnection?.status == Connection.Status.CONNECTED) {
+        if (natsConnection?.status == Connection.Status.CONNECTED) {
             val consumerName = "consumer_${UUID.randomUUID()}"
             ephemeralConsumers[topic] = consumerName
-
             startConsumer(topic)
         }
     }
@@ -196,21 +159,15 @@ class Realtime(private val context: Context, private val apiKey: String, private
     fun off(topic: String): Boolean {
         validateTopic(topic)
         listeners.remove(topic)
+        consumerJobs.remove(topic)?.cancel()
         val removed = consumers.remove(topic)
-
-        val consumerName = ephemeralConsumers.remove(topic)
-
-        if (consumerName != null) {
+        ephemeralConsumers.remove(topic)?.let { name ->
             try {
-                val jsm = natsConnection?.jetStreamManagement()
-                if (namespace != null) {
-                    jsm?.deleteConsumer(namespace, consumerName)
-                }
+                natsConnection?.jetStreamManagement()?.deleteConsumer(namespace, name)
             } catch (e: Exception) {
                 if (debug) Log.e("Realtime", "Failed to delete ephemeral consumer: ${e.message}")
             }
         }
-
         subscribedTopics.remove(topic)
         sdkListeners.remove(topic)
         return removed != null
@@ -284,10 +241,53 @@ class Realtime(private val context: Context, private val apiKey: String, private
     fun close() {
         try {
             isManuallyDisconnected.set(true)
+            consumerJobs.values.forEach { it.cancel() }
+            consumerJobs.clear()
             natsConnection?.close()
             isConnected.set(false)
         } catch (e: Exception) {
             if (debug) Log.e("Realtime", "Error on close: ${e.message}")
+        }
+    }
+
+    private fun startConsumer(topic: String) {
+        val finalTopic = finalTopic(topic)
+        val consumerConfig = ConsumerConfiguration.builder()
+            .name(ephemeralConsumers[topic])
+            .filterSubject(finalTopic)
+            .ackPolicy(AckPolicy.Explicit)
+            .deliverPolicy(DeliverPolicy.New)
+            .replayPolicy(ReplayPolicy.Instant)
+            .build()
+        val sub = jetStream?.subscribe(finalTopic, PushSubscribeOptions.builder().configuration(consumerConfig).build())
+
+        val job = CoroutineScope(Dispatchers.IO).launch {
+            while (isActive && natsConnection?.status == Connection.Status.CONNECTED) {
+                try {
+                    val msg = sub?.nextMessage(Duration.ofSeconds(5)) ?: continue
+                    val unpacked = mapper.readValue(msg.data, MessageInfo::class.java)
+                    val msgClientId = unpacked.client_id
+                    val room = unpacked.room
+                    if (msgClientId != clientId && listeners.containsKey(room)) {
+                        msg.ack()
+                        listeners[room]?.invoke(JSONObject().apply {
+                            put("id", unpacked.id)
+                            put("message", unpacked.message)
+                        })
+                    }
+                } catch (e: Exception) {
+                    if (debug) Log.e("Realtime", "Consumer error [$topic]: ${e.message}")
+                    break
+                }
+            }
+            if (debug) Log.d("Realtime", "Consumer loop for $topic exited.")
+        }
+        consumerJobs[topic] = job
+    }
+
+    private fun subscribeToTopics() {
+        for (topic in subscribedTopics) {
+            startConsumer(topic)
         }
     }
 
@@ -305,7 +305,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     }
 
     private fun validateTopic(topic: String) {
-        require(!topic.isNullOrBlank() && !topic.isNullOrEmpty() && topic.isNotBlank() && !topic.contains(" ") && !topic.contains("*")) { "Invalid topic" }
+        require(!topic.isBlank() && !topic.contains(" ") && !topic.contains("*")) { "Invalid topic" }
     }
 
     private fun validateMessage(msg: Any) {
@@ -316,90 +316,31 @@ class Realtime(private val context: Context, private val apiKey: String, private
         require(msg != null) { "Message must not be null or empty" }
     }
 
-    private fun finalTopic(topic: String): String =
-        "${hash}.$topic"
+    private fun finalTopic(topic: String): String = "$hash.$topic"
 
     private fun emitSdk(topic: String, message: String) {
         sdkListeners[topic]?.invoke(message)
     }
 
     private fun getRequestBody(): RequestBody {
-        val requestBody: RequestBody = RequestBody()
+        val requestBody = RequestBody()
         requestBody.api_key = apiKey
         return requestBody
     }
 
-
     private fun getNamespace(): JSONObject? {
-        if(natsConnection != null) {
-            natsConnection?.let {
-
-                val requestJson = JSONObject()
-                requestJson.put("api_key", apiKey)
-
-                val originalRequestBody: RequestBody? = getRequestBody()
-                val originalJson = JsonWriter.toJsonBytes(originalRequestBody)
-
-                val subject = "accounts.user.get_namespace"
-                val timeout = Duration.ofSeconds(20)
-
-                val responseMsg: Message? = it.request(
-                    subject,
-                    originalJson,
-                    timeout
-                )
-
-                val responseStr = String(responseMsg?.data ?: byteArrayOf(), Charsets.UTF_8)
-
-                val responseJson = JSONObject(responseStr)
-
-                if(responseJson.getString("status").equals("NAMESPACE_RETRIEVE_SUCCESS")) {
-                    val responseDataJson = JSONObject(responseJson.getString("data"))
-                    return responseDataJson
-                } else {
-                    return null
-                }
-            } ?: return null
-        } else
-            return null
-    }
-
-    private fun startConsumer(topic: String) {
-        val finalTopic = finalTopic(topic)
-        val consumerConfig = ConsumerConfiguration.builder()
-            .name(ephemeralConsumers[topic])
-            .filterSubject(finalTopic)
-            .ackPolicy(AckPolicy.Explicit)
-            .deliverPolicy(DeliverPolicy.New)
-            .replayPolicy(ReplayPolicy.Instant)
-            .build()
-
-        val sub = jetStream?.subscribe(finalTopic, PushSubscribeOptions.builder().configuration(consumerConfig).build())
-
-        GlobalScope.launch(Dispatchers.IO) {
-            while (true) {
-                try {
-                    val msg = sub?.nextMessage(Duration.ofSeconds(5)) ?: continue
-                    val unpacked: MessageInfo = mapper.readValue(msg.data, MessageInfo::class.java)
-                    val msgClientId = unpacked.client_id
-                    val room = unpacked.room
-                    if (msgClientId != natsConnection?.serverInfo?.clientId.toString() && listeners.containsKey(room)) {
-                        msg.ack()
-                        listeners[room]?.invoke(JSONObject().apply {
-                            put("id", unpacked.id)
-                            put("message", unpacked.message)
-                        })
-                    }
-                } catch (e: Exception) {
-                    if (debug) Log.e("Realtime", "Error in consumer loop: ${e.message}")
-                }
-            }
-        }
-    }
-
-    private fun subscribeToTopics() {
-        for (topic in subscribedTopics) {
-            startConsumer(topic)
+        return try {
+            val requestJson = JSONObject().put("api_key", apiKey)
+            val originalJson = JsonWriter.toJsonBytes(getRequestBody())
+            val responseMsg = natsConnection?.request("accounts.user.get_namespace", originalJson, Duration.ofSeconds(20))
+            val responseStr = String(responseMsg?.data ?: byteArrayOf(), StandardCharsets.UTF_8)
+            val responseJson = JSONObject(responseStr)
+            if (responseJson.getString("status") == "NAMESPACE_RETRIEVE_SUCCESS") {
+                JSONObject(responseJson.getString("data"))
+            } else null
+        } catch (e: Exception) {
+            if (debug) Log.e("Realtime", "Namespace fetch failed: ${e.message}")
+            null
         }
     }
 }
