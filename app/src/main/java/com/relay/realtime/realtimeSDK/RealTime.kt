@@ -214,20 +214,8 @@ class Realtime(private val context: Context, private val apiKey: String, private
         } finally {
             try {
                 val jsm = natsConnection?.jetStreamManagement()
-
-                val streamName = jsm?.streamNames?.firstOrNull { stream ->
-                    try {
-                        val info = jsm.getStreamInfo(stream)
-                        info.config.subjects.any { subject -> finalTopic.contains(subject) }
-
-                        true
-                    } catch (e: Exception) {
-                        false
-                    }
-                }
-
-                if (streamName != null) {
-                    jsm.deleteConsumer(streamName, consumerName)
+                if (namespace != null) {
+                    jsm?.deleteConsumer(namespace, consumerName)
                 } else if (debug) {
                     Log.e("Realtime", "Stream not found for subject: $finalTopic")
                 }
