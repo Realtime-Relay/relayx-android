@@ -32,6 +32,9 @@ import org.msgpack.core.MessagePack
 import org.msgpack.jackson.dataformat.MessagePackFactory
 import java.nio.charset.StandardCharsets
 import java.time.Duration
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.util.Collections
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -134,22 +137,31 @@ class Realtime(private val context: Context, private val apiKey: String, private
             subscribeToTopics()
     }
 
-    suspend fun publish(topic: String, message: Any, isRentMessage: Boolean = false): Boolean = withContext(Dispatchers.IO) {
+    suspend fun publish(topic: String, message: Any): Boolean = withContext(Dispatchers.IO) {
         validateTopic(topic)
         validateEmptyMessage(message)
         validateMessage(message)
+
+        sendOnlineOfflineMessage(topic, message)
+    }
+
+    private fun CoroutineScope.sendOnlineOfflineMessage(
+        topic: String,
+        message: Any,
+        isResendMessage: Boolean = false
+    ): Boolean {
         if (reservedTopics.contains(topic)) throw IllegalArgumentException("Reserved SDK topic: $topic")
 
         val finalTopic = finalTopic(topic)
 
-        var sendMessage = if(isRentMessage) {
+        var sendMessage = if(isResendMessage) {
             ResendMessageInfo(
                 topic = topic,
                 message = message,
                 resent = true
             )
         } else {
-             MessageInfo(
+            MessageInfo(
                 client_id = clientId,
                 id = UUID.randomUUID().toString(),
                 room = topic,
@@ -165,7 +177,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         packer.writePayload(packed)
         packer.close()
 
-        if (isConnected.get()) {
+        return if (isConnected.get()) {
             jetStream?.publish(
                 NatsMessage.builder()
                     .subject(finalTopic)
@@ -229,11 +241,16 @@ class Realtime(private val context: Context, private val apiKey: String, private
         val result = mutableListOf<Any>()
         val consumerName = "history_consumer_${UUID.randomUUID()}"
 
+        val zonedDateTime: ZonedDateTime = Instant.ofEpochMilli(start)
+            .atZone(ZoneId.systemDefault()) // or use ZoneId.of("UTC") if needed
+
+
         val config = ConsumerConfiguration.builder()
             .name(consumerName)
             .filterSubject(finalTopic)
+            .startTime(zonedDateTime)
             .ackPolicy(AckPolicy.None)
-            .deliverPolicy(DeliverPolicy.All)
+            .deliverPolicy(DeliverPolicy.ByStartTime)
             .replayPolicy(ReplayPolicy.Instant)
             .build()
         val opts = PullSubscribeOptions.builder().configuration(config).build()
@@ -290,7 +307,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         for (msg in offlineMessages) {
             val topic = msg["topic"] as? String ?: continue
             val content = msg["message"] ?: continue
-            val sent = publish(topic, content, true)
+            val sent = sendOnlineOfflineMessage(topic, content, true)
             msg["resent"] = sent
             result.add(msg)
         }
