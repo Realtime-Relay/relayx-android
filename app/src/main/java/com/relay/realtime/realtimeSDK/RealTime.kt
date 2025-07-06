@@ -130,8 +130,10 @@ class Realtime(private val context: Context, private val apiKey: String, private
         }
 
         namespaceData = getNamespace()
-        namespace = namespaceData?.optString("namespace")
-        hash = namespaceData?.optString("hash")
+        if(namespaceData != null) {
+            namespace = namespaceData?.optString("namespace")
+            hash = namespaceData?.optString("hash")
+        }
 
         emitSdk("CONNECTED", "CONNECTED")
             subscribeToTopics()
@@ -361,11 +363,15 @@ class Realtime(private val context: Context, private val apiKey: String, private
                 )
 
                 val responseStr = String(responseMsg?.data ?: byteArrayOf(), Charsets.UTF_8)
+
                 val responseJson = JSONObject(responseStr)
-                val responseDataJson = JSONObject(responseJson.getString("data"))
 
-                return responseDataJson
-
+                if(responseJson.getString("status").equals("NAMESPACE_RETRIEVE_SUCCESS")) {
+                    val responseDataJson = JSONObject(responseJson.getString("data"))
+                    return responseDataJson
+                } else {
+                    return null
+                }
             } ?: return null
         } else
             return null
