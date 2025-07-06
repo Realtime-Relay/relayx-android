@@ -60,7 +60,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     private var hash: String? = null
 
     private val isConnected = AtomicBoolean(false)
-    private val sdkListeners = ConcurrentHashMap<String, (String) -> Unit>()
+    private val sdkListeners = ConcurrentHashMap<String, (Any) -> Unit>()
     private val subscribedTopics = CopyOnWriteArraySet<String>()
     private val consumers = ConcurrentHashMap<String, Dispatcher>()
     private val offlineMessages = Collections.synchronizedList(mutableListOf<MutableMap<String, Any?>>())
@@ -141,13 +141,6 @@ class Realtime(private val context: Context, private val apiKey: String, private
         validateEmptyMessage(message)
         validateMessage(message)
 
-        sendOnlineOfflineMessage(topic, message)
-    }
-
-    private fun CoroutineScope.sendOnlineOfflineMessage(
-        topic: String,
-        message: Any,
-    ): Boolean {
         if (reservedTopics.contains(topic)) throw IllegalArgumentException("Reserved SDK topic: $topic")
 
         val finalTopic = finalTopic(topic)
@@ -167,7 +160,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         packer.writePayload(packed)
         packer.close()
 
-        return if (isConnected.get()) {
+        if (isConnected.get()) {
             jetStream?.publish(
                 NatsMessage.builder()
                     .subject(finalTopic)
@@ -178,8 +171,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         } else {
             offlineMessages.add(mutableMapOf("topic" to topic, "message" to message, "resent" to false))
             false
-        }
-    }
+        }    }
 
     fun on(topic: String, listener: (JSONObject) -> Unit) {
         validateTopic(topic)
@@ -297,12 +289,12 @@ class Realtime(private val context: Context, private val apiKey: String, private
         for (msg in offlineMessages) {
             val topic = msg["topic"] as? String ?: continue
             val content = msg["message"] ?: continue
-            val sent = sendOnlineOfflineMessage(topic, content)
+            val sent = publish(topic, content)
             msg["resent"] = sent
             result.add(msg)
         }
         offlineMessages.clear()
-        sdkListeners["MESSAGE_RESEND"]?.invoke(JSONObject(mapOf("resend" to result)).toString())
+        sdkListeners["MESSAGE_RESEND"]?.invoke(JSONObject(mapOf("resend" to result)))
     }
 
     private fun validateTopic(topic: String) {
