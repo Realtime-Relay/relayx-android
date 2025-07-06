@@ -332,7 +332,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     }
 
     private fun finalTopic(topic: String): String =
-        "${namespace}.$topic"
+        "${hash}.$topic"
 
     private fun emitSdk(topic: String, message: String) {
         sdkListeners[topic]?.invoke(message)
