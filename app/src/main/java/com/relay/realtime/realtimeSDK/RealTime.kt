@@ -55,7 +55,9 @@ class Realtime(private val context: Context, private val apiKey: String, private
     private var clientId: String = ""
     private var natsConnection: Connection? = null
     private var jetStream: JetStream? = null
+    private var namespaceData: JSONObject? = null
     private var namespace: String? = null
+    private var hash: String? = null
 
     private val isConnected = AtomicBoolean(false)
     private val sdkListeners = ConcurrentHashMap<String, (String) -> Unit>()
@@ -124,7 +126,9 @@ class Realtime(private val context: Context, private val apiKey: String, private
             isConnected.set(true)
         }
 
-        namespace = getNamespace()
+        namespaceData = getNamespace()
+        namespace = namespaceData?.optString("namespace")
+        hash = namespaceData?.optString("hash")
 
         emitSdk("CONNECTED", "CONNECTED")
             subscribeToTopics()
@@ -341,7 +345,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     }
 
 
-    fun getNamespace(): String? {
+    fun getNamespace(): JSONObject? {
         if(natsConnection != null) {
             natsConnection?.let {
 
@@ -364,7 +368,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
                 val responseJson = JSONObject(responseStr)
                 val responseDataJson = JSONObject(responseJson.getString("data"))
 
-                return responseDataJson.getString("hash")
+                return responseDataJson
 
             } ?: return null
         } else
