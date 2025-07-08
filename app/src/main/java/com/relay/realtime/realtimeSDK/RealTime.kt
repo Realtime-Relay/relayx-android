@@ -298,25 +298,13 @@ class Realtime(private val context: Context, private val apiKey: String, private
             put("history", latencyHistory.toList())
         }
 
-        try {
-            val packed = mapper.writeValueAsBytes(payload)
-            val packer = MessagePack.newDefaultBufferPacker()
-            packer.writePayload(packed)
-            packer.close()
+        val originalJson = JsonWriter.toJsonBytes(payload)
+        natsConnection?.request("accounts.user.log_latency", originalJson, Duration.ofSeconds(5))
 
-            natsConnection?.request(
-                "accounts.user.log_latency",
-                packer.toByteArray(),
-                Duration.ofSeconds(5)
-            )
+        if (debug) Log.d("Realtime", "Published latency log with ${latencyHistory.size} entries")
 
-            if (debug) Log.d("Realtime", "Published latency log with ${latencyHistory.size} entries")
-        } catch (e: Exception) {
-            if (debug) Log.e("Realtime", "Failed to publish latency log: ${e.message}")
-        } finally {
-            latencyHistory.clear()
-            lastLatencyFlushTime = now
-        }
+        latencyHistory.clear()
+        lastLatencyFlushTime = now
     }
 
     private fun subscribeToTopics() {
