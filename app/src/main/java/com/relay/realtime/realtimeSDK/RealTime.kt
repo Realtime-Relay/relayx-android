@@ -60,6 +60,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     private val isReconnecting = AtomicBoolean(false)
     private val latencyHistory = CopyOnWriteArrayList<Map<String, Any>>()
     private var lastLatencyFlushTime = System.currentTimeMillis()
+    private var latencyTimerJob: Job? = null
 
     fun init(staging: Boolean, opts: Map<String, Any>?) {
         requireNotNull(opts) { "Options map must not be null" }
@@ -124,6 +125,13 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
         emitSdk("CONNECTED", "CONNECTED")
         subscribeToTopics()
+
+        latencyTimerJob = CoroutineScope(Dispatchers.IO).launch {
+            while (isActive) {
+                delay(30_000)
+                flushLatencyLog(force = true)
+            }
+        }
     }
 
     suspend fun publish(topic: String, message: Any): Boolean = withContext(Dispatchers.IO) {
@@ -177,22 +185,16 @@ class Realtime(private val context: Context, private val apiKey: String, private
         return removed != null
     }
 
-
     suspend fun history(topic: String, start: Long, end: Long?): List<Any> = withContext(Dispatchers.IO) {
         validateTopic(topic)
-
         requireNotNull(start) { "Start date cannot be null" }
-        if (end != null && end < (start)) throw IllegalArgumentException("End date before start")
+        if (end != null && end < start) throw IllegalArgumentException("End date before start")
         if (!isConnected.get()) return@withContext emptyList()
 
         val finalTopic = finalTopic(topic)
-
         val result = mutableListOf<Any>()
         val consumerName = "history_consumer_${UUID.randomUUID()}"
-
-        val zonedDateTime: ZonedDateTime = Instant.ofEpochMilli(start)
-            .atZone(ZoneId.systemDefault()) // or use ZoneId.of("UTC") if needed
-
+        val zonedDateTime = Instant.ofEpochMilli(start).atZone(ZoneId.systemDefault())
 
         val config = ConsumerConfiguration.builder()
             .name(consumerName)
@@ -210,7 +212,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
             val fetched = sub?.fetch(100, Duration.ofSeconds(10)) ?: return@withContext result
 
             for (msg in fetched) {
-                val unpacked: MessageInfo = mapper.readValue(msg.data, MessageInfo::class.java) // ➜ back to object
+                val unpacked: MessageInfo = mapper.readValue(msg.data, MessageInfo::class.java)
                 if (start < unpacked.start && (end ?: System.currentTimeMillis()) > unpacked.start) {
                     result.add(unpacked.message)
                 }
@@ -218,11 +220,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         } finally {
             try {
                 val jsm = natsConnection?.jetStreamManagement()
-                if (namespace != null) {
-                    jsm?.deleteConsumer(namespace, consumerName)
-                } else if (debug) {
-                    Log.e("Realtime", "Stream not found for subject: $finalTopic")
-                }
+                if (namespace != null) jsm?.deleteConsumer(namespace, consumerName)
             } catch (e: Exception) {
                 if (debug) Log.e("Realtime", "Failed to delete consumer: ${e.message}")
             }
@@ -233,6 +231,8 @@ class Realtime(private val context: Context, private val apiKey: String, private
     fun close() {
         try {
             isManuallyDisconnected.set(true)
+            latencyTimerJob?.cancel()
+            latencyTimerJob = null
             consumerJobs.values.forEach { it.cancel() }
             consumerJobs.clear()
             natsConnection?.close()
@@ -257,7 +257,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
             while (isActive && natsConnection?.status == Connection.Status.CONNECTED) {
                 try {
                     val msg = sub?.nextMessage(Duration.ofSeconds(5)) ?: continue
-                    val receivedTime = System.currentTimeMillis() // <- initialize here
+                    val receivedTime = System.currentTimeMillis()
                     val unpacked = mapper.readValue(msg.data, MessageInfo::class.java)
                     val msgClientId = unpacked.client_id
                     val room = unpacked.room
@@ -267,7 +267,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
                             put("id", unpacked.id)
                             put("message", unpacked.message)
                         })
-                        logLatency(unpacked.start, receivedTime) // <- pass both values
+                        logLatency(unpacked.start, receivedTime)
                     }
                 } catch (e: Exception) {
                     if (debug) Log.e("Realtime", "Consumer error [$topic]: ${e.message}")
@@ -282,42 +282,42 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
     private fun logLatency(sentTime: Long, receivedTime: Long) {
         val latency = receivedTime - sentTime
-        val timezone = TimeZone.getDefault().id
-
         latencyHistory.add(mapOf("latency" to latency, "timestamp" to receivedTime))
-
-        val now = System.currentTimeMillis()
-        val shouldFlush = latencyHistory.size >= 100 || (now - lastLatencyFlushTime) >= 30_000
-
-        if (shouldFlush) {
-            val payload = JSONObject().apply {
-                put("timezone", timezone)
-                put("history", latencyHistory.toList())
-            }
-
-            try {
-                val packed = mapper.writeValueAsBytes(payload)
-                val packer = MessagePack.newDefaultBufferPacker()
-                packer.writePayload(packed)
-                packer.close()
-
-                jetStream?.publish(
-                    NatsMessage.builder()
-                        .subject("accounts.user.log_latency")
-                        .data(packer.toByteArray())
-                        .build()
-                )
-
-                if (debug) Log.d("Realtime", "Published latency log with ${latencyHistory.size} entries")
-            } catch (e: Exception) {
-                if (debug) Log.e("Realtime", "Failed to publish latency log: ${e.message}")
-            } finally {
-                latencyHistory.clear()
-                lastLatencyFlushTime = now
-            }
-        }
+        flushLatencyLog()
     }
 
+    private fun flushLatencyLog(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (latencyHistory.isEmpty()) return
+
+        val shouldFlush = latencyHistory.size >= 100 || force || (now - lastLatencyFlushTime) >= 30_000
+        if (!shouldFlush) return
+
+        val payload = JSONObject().apply {
+            put("timezone", TimeZone.getDefault().id)
+            put("history", latencyHistory.toList())
+        }
+
+        try {
+            val packed = mapper.writeValueAsBytes(payload)
+            val packer = MessagePack.newDefaultBufferPacker()
+            packer.writePayload(packed)
+            packer.close()
+
+            natsConnection?.request(
+                "accounts.user.log_latency",
+                packer.toByteArray(),
+                Duration.ofSeconds(5)
+            )
+
+            if (debug) Log.d("Realtime", "Published latency log with ${latencyHistory.size} entries")
+        } catch (e: Exception) {
+            if (debug) Log.e("Realtime", "Failed to publish latency log: ${e.message}")
+        } finally {
+            latencyHistory.clear()
+            lastLatencyFlushTime = now
+        }
+    }
 
     private fun subscribeToTopics() {
         for (topic in subscribedTopics) {
