@@ -59,6 +59,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     private val ephemeralConsumers = ConcurrentHashMap<String, String>()
     private val isReconnecting = AtomicBoolean(false)
     private val latencyHistory = CopyOnWriteArrayList<Map<String, Any>>()
+    private var lastLatencyFlushTime = System.currentTimeMillis()
 
     fun init(staging: Boolean, opts: Map<String, Any>?) {
         requireNotNull(opts) { "Options map must not be null" }
@@ -256,6 +257,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
             while (isActive && natsConnection?.status == Connection.Status.CONNECTED) {
                 try {
                     val msg = sub?.nextMessage(Duration.ofSeconds(5)) ?: continue
+                    val receivedTime = System.currentTimeMillis() // <- initialize here
                     val unpacked = mapper.readValue(msg.data, MessageInfo::class.java)
                     val msgClientId = unpacked.client_id
                     val room = unpacked.room
@@ -265,7 +267,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
                             put("id", unpacked.id)
                             put("message", unpacked.message)
                         })
-                        logLatency(unpacked.start)
+                        logLatency(unpacked.start, receivedTime) // <- pass both values
                     }
                 } catch (e: Exception) {
                     if (debug) Log.e("Realtime", "Consumer error [$topic]: ${e.message}")
@@ -274,17 +276,20 @@ class Realtime(private val context: Context, private val apiKey: String, private
             }
             if (debug) Log.d("Realtime", "Consumer loop for $topic exited.")
         }
+
         consumerJobs[topic] = job
     }
 
-    private fun logLatency(sentTime: Long) {
-        val receivedTime = System.currentTimeMillis()
+    private fun logLatency(sentTime: Long, receivedTime: Long) {
         val latency = receivedTime - sentTime
         val timezone = TimeZone.getDefault().id
 
         latencyHistory.add(mapOf("latency" to latency, "timestamp" to receivedTime))
 
-        if (latencyHistory.size >= 100) {
+        val now = System.currentTimeMillis()
+        val shouldFlush = latencyHistory.size >= 100 || (now - lastLatencyFlushTime) >= 30_000
+
+        if (shouldFlush) {
             val payload = JSONObject().apply {
                 put("timezone", timezone)
                 put("history", latencyHistory.toList())
@@ -302,10 +307,13 @@ class Realtime(private val context: Context, private val apiKey: String, private
                         .data(packer.toByteArray())
                         .build()
                 )
+
+                if (debug) Log.d("Realtime", "Published latency log with ${latencyHistory.size} entries")
             } catch (e: Exception) {
                 if (debug) Log.e("Realtime", "Failed to publish latency log: ${e.message}")
             } finally {
                 latencyHistory.clear()
+                lastLatencyFlushTime = now
             }
         }
     }
