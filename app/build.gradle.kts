@@ -64,15 +64,26 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.1")
     implementation("org.msgpack:msgpack-core:0.9.0")
 
-//    implementation("io.nats:jnats:2.17.6")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.mockito:mockito-core:5.11.0")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+    testImplementation("org.mockito.kotlin:mockito-kotlin:5.2.1")
+    testImplementation("org.robolectric:robolectric:4.12.1") // if needed
+
+
+
+//    testImplementation("org.junit.jupiter:junit-jupiter:5.10.0")
+//    testImplementation("io.mockk:mockk:1.13.8") // or Mockito if preferred
+//    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
 //
-//    // WebSocket support
-//    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 //
-//    // Optional: Coroutines (recommended for async flow)
-//    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-//
-//    // Logging (optional)
-//    implementation("com.jakewharton.timber:timber:5.0.1")
+////    testImplementation("io.mockk:mockk:1.13.5")
+////    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+//    testImplementation("junit:junit:4.13.2")
+//    testImplementation("androidx.test:core:1.5.0")
+//    testImplementation("org.robolectric:robolectric:4.10.3")
+////    testImplementation(kotlin("test"))
+    testImplementation(kotlin("test"))
+
 
 }

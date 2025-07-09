@@ -143,6 +143,12 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
         val finalTopic = finalTopic(topic)
         val sendMessage = MessageInfo(client_id = clientId, id = UUID.randomUUID().toString(), room = topic, message = message, start = System.currentTimeMillis())
+
+        if (!::mapper.isInitialized) {
+            mapper = ObjectMapper(MessagePackFactory()).registerKotlinModule()
+        }
+
+
         val packed: ByteArray = mapper.writeValueAsBytes(sendMessage)
         val packer: MessageBufferPacker = MessagePack.newDefaultBufferPacker()
         packer.writePayload(packed)
@@ -363,5 +369,24 @@ class Realtime(private val context: Context, private val apiKey: String, private
             if (debug) Log.e("Realtime", "Namespace fetch failed: ${e.message}")
             null
         }
+    }
+
+
+    // ----- create to access private varibale or function
+
+    fun checkIsConnected(): Boolean {
+        return  isConnected.get()
+    }
+
+    fun listenersList(): ConcurrentHashMap<String, (JSONObject) -> Unit> {
+        return listeners
+    }
+
+    fun flushLatencyLogPublic(force: Boolean) {
+        flushLatencyLog(force)
+    }
+
+    suspend fun offlineMessage() {
+        resendOfflineMessages()
     }
 }
