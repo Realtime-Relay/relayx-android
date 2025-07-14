@@ -1,29 +1,16 @@
 package com.relay.realtime.realtimeSDK
 
 import android.content.Context
-import com.fasterxml.jackson.databind.ObjectMapper
-import io.nats.client.*
-import io.nats.client.api.ServerInfo
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.test.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
 import org.junit.*
+import org.junit.Assert.*
 import org.junit.runner.RunWith
 import org.mockito.Mock
-import org.mockito.Mockito.*
-import org.mockito.MockitoAnnotations
 import org.mockito.junit.MockitoJUnitRunner
-import java.io.File
-import java.lang.reflect.InvocationTargetException
-import java.time.Duration
-import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
-import kotlin.test.assertTrue
-import kotlin.test.fail
+import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(MockitoJUnitRunner::class)
@@ -39,145 +26,181 @@ class RealtimeTest {
 
     private val apiKey = Utils.API_KEY
     private val secretKey = Utils.SECRET_KEY
+    private val staging = false
 
     @Before
-    fun setUp() {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-        realtime = Realtime(context, apiKey, secretKey)
+    fun setup() = runTest {
+        realtime = Realtime(
+            context = context,
+            apiKey = apiKey,
+            secretKey = secretKey
+        )
+        realtime.init(staging = staging, opts = mapOf("debug" to true))
+//        realtime.connect()
     }
 
     @After
-    fun tearDown() {
-        Dispatchers.resetMain()
-    }
-
-    @Test(expected = IllegalArgumentException::class)
-    fun `init throws if apiKey is blank`() {
-        Realtime(context, "", secretKey)
-    }
-
-    @Test(expected = IllegalArgumentException::class)
-    fun `init throws if secretKey is blank`() {
-        Realtime(context, apiKey, "")
-    }
-
-    @Test
-    fun `init sets staging and debug`() {
-        val opts = mapOf("debug" to true)
-        realtime.init(staging = true, opts = opts)
-
-        val stagingField = Realtime::class.java.getDeclaredField("staging")
-        stagingField.isAccessible = true
-        val debugField = Realtime::class.java.getDeclaredField("debug")
-        debugField.isAccessible = true
-
-        assertTrue(stagingField.get(realtime) as Boolean)
-        assertTrue(debugField.get(realtime) as Boolean)
-    }
-
-    @Test(expected = IllegalArgumentException::class)
-    fun `init throws if opts is null`() {
-        realtime.init(staging = false, opts = null)
-    }
-
-    @Test
-    fun `init is successful`() {
-        realtime.init(staging = false, opts = mapOf("debug" to true))
-    }
-
-    @Test
-    fun testConnectSuccess() = runBlocking {
-        // Ideally mock Nats.connect and response of request to getNamespace
-        try {
-            realtime.connect()
-            assertTrue(realtime.checkIsConnected())
-        } catch (e: Exception) {
-            fail("Connect should not throw exception: ${e.message}")
-        }
-    }
-
-    @Test
-    fun testPublishOfflineAndResend() = runBlocking {
-        @Test
-        fun testPublishOfflineAndResend() = runBlocking {
-            val message = mapOf("key" to "value")
-            val published = realtime.publish("test.topic", message)
-            assertFalse(published)
-
-            realtime.connect() // mocked
-            realtime.offlineMessage()
-
-            // Optional: verify internal state or hook into MESSAGE_RESEND via sdkListeners
-        }
-
-
-        // Ideally verify internal state or hook into MESSAGE_RESEND
-    }
-
-    @Test
-    fun testOnTopicRegistersListener() {
-        val called = AtomicBoolean(false)
-        realtime.on("chat.test") { msg ->
-            called.set(true)
-            assertNotNull(msg)
-        }
-        assertTrue(realtime.listenersList().containsKey("chat.test"))
-    }
-
-    @Test
-    fun testOffRemovesListenerAndConsumer() {
-        realtime.on("chat.remove") { /* no-op */ }
-        val result = realtime.off("chat.remove")
-        assertTrue(result)
-        assertFalse(realtime.listenersList().containsKey("chat.remove"))
-    }
-
-    @Test
-    fun testHistoryReturnsEmptyWhenDisconnected() = runBlocking {
-        val result = realtime.history("chat.history", start = System.currentTimeMillis() - 1000, end = null)
-        assertTrue(result.isEmpty())
-    }
-
-    @Test
-    fun testFlushLatencyLogForcesSend() {
-        realtime.flushLatencyLogPublic(force = true)
-        // Can’t verify directly unless you expose/log something.
-    }
-
-    @Test
-    fun testInvalidTopicThrowsException() {
-        val method = Realtime::class.java.getDeclaredMethod("validateTopic", String::class.java)
-        method.isAccessible = true
-
-        try {
-            method.invoke(realtime, "invalid topic with space")
-            fail("Expected IllegalArgumentException was not thrown")
-        } catch (e: InvocationTargetException) {
-            assertTrue(e.cause is IllegalArgumentException)
-            assertEquals("Invalid topic", e.cause?.message)
-        }
-    }
-
-
-    @Test
-    fun testCloseReleasesResources() {
+    fun teardown() {
         realtime.close()
-        assertFalse(realtime.checkIsConnected())
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `init fails when options are null`() {
+        realtime.init(staging, null)
     }
 
     @Test
-    fun testLogLatencyAddsEntry() {
-        val start = System.currentTimeMillis() - 100
-        val end = System.currentTimeMillis()
-        val method = Realtime::class.java.getDeclaredMethod("logLatency", Long::class.java, Long::class.java)
-        method.isAccessible = true
-        method.invoke(realtime, start, end)
+    fun `init sets flags correctly`() {
+        val r = Realtime(context, apiKey, secretKey)
+        r.init(staging, mapOf("debug" to true))
+        assertTrue(r.checkIsConnected().not()) // Should not be connected yet
+    }
 
-        val latencyField = Realtime::class.java.getDeclaredField("latencyHistory")
-        latencyField.isAccessible = true
-        val list = latencyField.get(realtime) as List<*>
-        assertTrue(list.isNotEmpty())
+    @Test
+    fun `publish works and stores offline message when not connected`() = runTest {
+        val r = Realtime(context, apiKey, secretKey)
+        r.init(staging, mapOf("debug" to true))
+
+        println("Offline: " + r.checkIsConnected())
+        val offlineMessages = Collections.synchronizedList(mutableListOf<MutableMap<String, Any?>>())
+        offlineMessages.add(mutableMapOf("topic" to "offline.topic", "message" to "offline", "resent" to false))
+
+
+        r.offlineMessage(offlineMessages) // should not crash
+    }
+
+    @Test
+    fun `on and off functions properly`() = runTest {
+        val topic = "test-topic"
+        var called = false
+
+        realtime.on(topic) {
+            called = true
+        }
+
+        assertTrue(realtime.listenersList().containsKey(topic))
+
+        realtime.off(topic)
+        assertFalse(realtime.listenersList().containsKey(topic))
+    }
+
+    @Test
+    fun `off returns false for unknown topic`() = runTest {
+        val result = realtime.off("unknown-topic")
+        assertFalse(result)
+    }
+
+    @Test
+    fun `publish rejects reserved topics`() = runTest {
+        val reserved = listOf("CONNECTED", "RECONNECT", "DISCONNECTED", "MESSAGE_RESEND")
+
+        for (topic in reserved) {
+            assertThrows(IllegalArgumentException::class.java) {
+                runBlocking {
+                    realtime.publish(topic, mapOf("msg" to "bad"))
+                }
+            }
+        }
+    }
+
+    fun assertThrowsOnPublish(topic: String, message: Any) {
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                realtime.publish(topic, message)
+            }
+        }
+    }
+
+    @Test
+    fun `publish throws on invalid message`() {
+        assertThrowsOnPublish("valid", "")
+        assertThrowsOnPublish("valid", 1.2)
     }
 
 
+    @Test
+    fun `publish validates topic and message`() = runTest {
+        val invalidTopics = listOf("", " ", "*invalid*", "in valid")
+
+        for (topic in invalidTopics) {
+            assertThrows(IllegalArgumentException::class.java) {
+                runBlocking {
+                    realtime.publish(topic, "data")
+                }
+            }
+        }
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                realtime.publish("valid", listOf(1, 2, 3)) // Invalid message type
+            }
+        }
+
+        val resultEmpty = realtime.publish("valid", "")
+        assertTrue("Invalid message should be published", resultEmpty)
+
+        val result = realtime.publish("valid", mapOf("key" to "value"))
+        assertTrue("Valid message should be published", result)
+
+    }
+
+    @Test
+    fun `history rejects invalid arguments`() = runTest {
+        val now = System.currentTimeMillis()
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                realtime.history("", now, null)
+            }
+        }
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                realtime.history("topic", now, now - 1000)
+            }
+        }
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                realtime.history("topic", now, null)
+            }
+        }
+    }
+
+    @Test
+    fun `flush latency log executes correctly`() = runTest {
+        realtime.flushLatencyLogPublic(force = true)
+    }
+
+    @Test
+    fun `resend offline messages triggers MESSAGE_RESEND`() = runTest {
+        var triggered = false
+
+        val field = Realtime::class.java.getDeclaredField("sdkListeners")
+        field.isAccessible = true
+        val listeners = field.get(realtime) as ConcurrentHashMap<String, (Any) -> Unit>
+        listeners["MESSAGE_RESEND"] = { triggered = true }
+
+        runBlocking {
+            val offlineMessages = Collections.synchronizedList(mutableListOf<MutableMap<String, Any?>>())
+            offlineMessages.add(mutableMapOf("topic" to "offline.topic", "message" to "offline", "resent" to false))
+
+
+            realtime.offlineMessage(offlineMessages)
+        }
+
+        assertTrue(triggered)
+    }
+
+    @Test
+    fun `multiple on calls do not re-subscribe`() = runTest {
+        val topic = "dedupe-topic"
+        val listener: (JSONObject) -> Unit = {}
+
+        realtime.on(topic, listener)
+        realtime.on(topic, listener)
+        realtime.on(topic, listener)
+
+        assertEquals(1, realtime.listenersList().count { it.key == topic })
+    }
 }

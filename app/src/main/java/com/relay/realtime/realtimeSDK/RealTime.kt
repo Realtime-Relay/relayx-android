@@ -25,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.collections.mutableListOf
 
 
 data class MessageInfo(val client_id: String, val id: String, val room: String, val message: Any, val start: Long)
@@ -386,7 +387,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         flushLatencyLog(force)
     }
 
-    suspend fun offlineMessage() {
+    suspend fun offlineMessage(offlineMsg: MutableList<MutableMap<String, Any?>>) {
         resendOfflineMessages()
     }
 }
