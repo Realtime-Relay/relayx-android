@@ -1,6 +1,8 @@
 package com.relay.realtime.realtimeSDK
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.util.Log
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
@@ -15,6 +17,8 @@ import org.json.JSONObject
 import org.msgpack.core.MessageBufferPacker
 import org.msgpack.core.MessagePack
 import org.msgpack.jackson.dataformat.MessagePackFactory
+import java.io.IOException
+import java.net.ConnectException
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.time.Instant
@@ -63,6 +67,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     private var lastLatencyFlushTime = System.currentTimeMillis()
     private var latencyTimerJob: Job? = null
 
+    private var startZonedDateTime: ZonedDateTime? = null
     fun init(staging: Boolean, opts: Map<String, Any>?) {
         requireNotNull(opts) { "Options map must not be null" }
         this.staging = staging
@@ -71,7 +76,24 @@ class Realtime(private val context: Context, private val apiKey: String, private
         mapper = ObjectMapper(MessagePackFactory()).registerKotlinModule()
     }
 
+    private fun isDeviceOnline(): Boolean {
+        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = connectivityManager.activeNetwork ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+
     suspend fun connect() = withContext(Dispatchers.IO) {
+
+        startZonedDateTime = Instant.ofEpochMilli(System.currentTimeMillis()).atZone(ZoneId.of("UTC"))
+
+        if (!isDeviceOnline()) {
+            if (debug) Log.e("Realtime", "No internet connection detected.")
+            emitSdk("RECONN_FAIL", "NO_INTERNET")
+            return@withContext
+        }
+
         val credsFile = createNatsCredsFile(context, apiKey, secretKey)
 
         val builder = Options.Builder()
@@ -87,53 +109,74 @@ class Realtime(private val context: Context, private val apiKey: String, private
                         emitSdk("CONNECTED", "CONNECTED")
                     }
                     ConnectionListener.Events.RECONNECTED -> {
+                        isConnected.set(true)
+
                         if (!isManuallyDisconnected.get()) {
                             isReconnecting.set(false)
                             emitSdk("RECONNECTED", "RECONNECTED")
-                            CoroutineScope(Dispatchers.IO).launch { resendOfflineMessages() }
+                            CoroutineScope(Dispatchers.IO).launch {
+                                resendOfflineMessages()
+                            }
                         }
                     }
                     ConnectionListener.Events.DISCONNECTED -> {
+                        isConnected.set(false)
                         if (!isManuallyDisconnected.get()) {
+                            startZonedDateTime = Instant.ofEpochMilli(System.currentTimeMillis()).atZone(ZoneId.of("UTC"))
                             if (isReconnecting.compareAndSet(false, true)) {
                                 emitSdk("RECONNECTING", "RECONNECTING")
                             }
                             emitSdk("RECONNECT", "RECONNECTING")
+                        } else {
+                            offlineMessages.clear()
                         }
                         emitSdk("DISCONNECTED", "DISCONNECTED")
-                        offlineMessages.clear()
                     }
                     else -> {}
                 }
             }
 
+        // Use actual routable host instead of 0.0.0.0
         for (port in 4221..4223) {
-            val host = if (staging) "nats://0.0.0.0:$port" else "nats://api.relay-x.io:$port"
+            val host = if (staging) "nats://staging.relay-x.io:$port" else "nats://api.relay-x.io:$port"
             builder.server(host)
         }
 
-        natsConnection = Nats.connect(builder.build()).also {
-            jetStream = it.jetStream()
-            clientId = it.serverInfo.clientId.toString()
-            isConnected.set(true)
-        }
-
-        namespaceData = getNamespace()
-        if (namespaceData != null) {
-            namespace = namespaceData?.optString("namespace")
-            hash = namespaceData?.optString("hash")
-        }
-
-        emitSdk("CONNECTED", "CONNECTED")
-        subscribeToTopics()
-
-        latencyTimerJob = CoroutineScope(Dispatchers.IO).launch {
-            while (isActive) {
-                delay(30_000)
-                flushLatencyLog(force = true)
+        try {
+            natsConnection = Nats.connect(builder.build()).also {
+                jetStream = it.jetStream()
+                clientId = it.serverInfo.clientId.toString()
+                isConnected.set(true)
             }
+
+            namespaceData = getNamespace()
+            if (namespaceData != null) {
+                namespace = namespaceData?.optString("namespace")
+                hash = namespaceData?.optString("hash")
+            }
+
+            emitSdk("CONNECTED", "CONNECTED")
+            subscribeToTopics()
+
+            latencyTimerJob = CoroutineScope(Dispatchers.IO).launch {
+                while (isActive) {
+                    delay(30_000)
+                    flushLatencyLog(force = true)
+                }
+            }
+
+        } catch (e: ConnectException) {
+            if (debug) Log.e("Realtime", "Connection failed: ${e.message}")
+            emitSdk("RECONN_FAIL", "CONNECTION_FAILED")
+        } catch (e: IOException) {
+            if (debug) Log.e("Realtime", "IO error on connect: ${e.message}")
+            emitSdk("RECONN_FAIL", "IO_EXCEPTION")
+        } catch (e: Exception) {
+            if (debug) Log.e("Realtime", "Unexpected error: ${e.message}")
+            emitSdk("RECONN_FAIL", "CONNECTION_ERROR")
         }
     }
+
 
     suspend fun publish(topic: String, message: Any): Boolean = withContext(Dispatchers.IO) {
         validateTopic(topic)
@@ -155,6 +198,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         packer.writePayload(packed)
         packer.close()
 
+        println("isConnected: " + isConnected)
         if (isConnected.get()) {
             jetStream?.publish(NatsMessage.builder().subject(finalTopic).data(packer.toByteArray()).build())
             true
@@ -255,7 +299,8 @@ class Realtime(private val context: Context, private val apiKey: String, private
             .name(ephemeralConsumers[topic])
             .filterSubject(finalTopic)
             .ackPolicy(AckPolicy.Explicit)
-            .deliverPolicy(DeliverPolicy.New)
+            .startTime(startZonedDateTime)
+            .deliverPolicy(DeliverPolicy.ByStartTime)
             .replayPolicy(ReplayPolicy.Instant)
             .build()
         val sub = jetStream?.subscribe(finalTopic, PushSubscribeOptions.builder().configuration(consumerConfig).build())
@@ -322,6 +367,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
     private suspend fun resendOfflineMessages() = withContext(Dispatchers.IO) {
         val result = mutableListOf<Map<String, Any?>>()
+
         for (msg in offlineMessages) {
             val topic = msg["topic"] as? String ?: continue
             val content = msg["message"] ?: continue
