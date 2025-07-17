@@ -43,6 +43,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
     private var staging: Boolean = false
     private var debug = false
+    private var opts: Map<String, Any>? = null
     private var clientId: String = ""
     private var natsConnection: Connection? = null
     private var jetStream: JetStream? = null
@@ -76,23 +77,10 @@ class Realtime(private val context: Context, private val apiKey: String, private
         mapper = ObjectMapper(MessagePackFactory()).registerKotlinModule()
     }
 
-    private fun isDeviceOnline(): Boolean {
-        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = connectivityManager.activeNetwork ?: return false
-        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-    }
-
 
     suspend fun connect() = withContext(Dispatchers.IO) {
 
         startZonedDateTime = Instant.ofEpochMilli(System.currentTimeMillis()).atZone(ZoneId.of("UTC"))
-
-        if (!isDeviceOnline()) {
-            if (debug) Log.e("Realtime", "No internet connection detected.")
-            emitSdk("RECONN_FAIL", "NO_INTERNET")
-            return@withContext
-        }
 
         val credsFile = createNatsCredsFile(context, apiKey, secretKey)
 
@@ -431,6 +419,14 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
     fun flushLatencyLogPublic(force: Boolean) {
         flushLatencyLog(force)
+    }
+
+    fun getStaging(): Boolean {
+        return staging
+    }
+
+    fun getOpts(): Map<String, Any>? {
+        return opts
     }
 
     suspend fun offlineMessage(offlineMsg: MutableList<MutableMap<String, Any?>>) {

@@ -21,9 +21,6 @@ class RealtimeTest {
     @Mock
     private lateinit var context: Context
 
-//    private val apiKey = "test-api-key"
-//    private val secretKey = "test-secret-key"
-
     private val apiKey = Utils.API_KEY
     private val secretKey = Utils.SECRET_KEY
     private val staging = false
@@ -44,9 +41,73 @@ class RealtimeTest {
         realtime.close()
     }
 
-    @Test(expected = IllegalArgumentException::class)
-    fun `init fails when options are null`() {
-        realtime.init(staging, null)
+    @Test
+    fun `test throws error when no config is passed`() {
+        val exception = assertThrows(IllegalArgumentException::class.java) {
+            Realtime(context = context, apiKey = "", secretKey = "")
+        }
+        assertEquals("apiKey must not be empty", exception.message)
+    }
+
+    @Test
+    fun `test throws error when only apiKey is passed`() {
+        val exception = assertThrows(IllegalArgumentException::class.java) {
+            Realtime(context = context, apiKey = "KEY", secretKey = "")
+        }
+        assertEquals("secretKey must not be empty", exception.message)
+    }
+
+    @Test
+    fun `test throws error when only secretKey is passed`() {
+        val exception = assertThrows(IllegalArgumentException::class.java) {
+            Realtime(context = context, apiKey = "", secretKey = "SECRET")
+        }
+        assertEquals("apiKey must not be empty", exception.message)
+    }
+
+    @Test
+    fun `test throws error when null is passed`() {
+        assertThrows(NullPointerException::class.java) {
+            Realtime(context = context, apiKey = null!!, secretKey = null!!)
+        }
+    }
+
+    @Test
+    fun `test init function with multiple configurations`() = runBlocking {
+        val realtime = Realtime(context, apiKey, secretKey)
+
+        // init(true)
+        realtime.init(true, mapOf())
+        assertTrue(realtime.getStaging())
+        assertEquals(emptyMap<String, Any>(), realtime.getOpts())
+
+        // init({ debug: true, max_retries: 2 })
+//        realtime.init(mapOf("debug" to true, "max_retries" to 2))
+//        assertFalse(realtime.getStaging())
+//        assertEquals(mapOf("debug" to true, "max_retries" to 2), realtime.getOpts())
+//        assertEquals(true, realtime.getOpts()?["debug"])
+//        assertEquals(2, realtime.getOpts()["max_retries"])
+//
+//        // init(true, { debug: false, max_retries: 2 })
+//        realtime.init(true, mapOf("debug" to false, "max_retries" to 2))
+//        assertTrue(realtime.getStaging())
+//        assertEquals(mapOf("debug" to false, "max_retries" to 2), realtime.getOpts())
+//        assertEquals(false, realtime.getOpts()["debug"])
+//        assertEquals(2, realtime.getOpts()["max_retries"])
+//
+//        // init(false)
+//        realtime.init(false)
+//        assertFalse(realtime.getStaging())
+//        assertEquals(emptyMap<String, Any>(), realtime.getOpts())
+//        assertNull(realtime.getOpts()["debug"])
+//        assertNull(realtime.getOpts()["max_retries"])
+//
+//        // init()
+//        realtime.init()
+//        assertFalse(realtime.getStaging())
+//        assertEquals(emptyMap<String, Any>(), realtime.getOpts())
+//        assertNull(realtime.getOpts()["debug"])
+//        assertNull(realtime.getOpts()["max_retries"])
     }
 
     @Test
