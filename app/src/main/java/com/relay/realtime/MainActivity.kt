@@ -124,7 +124,7 @@ class MainActivity : AppCompatActivity() {
         for (event in sdkEvents) {
             realtime.onSdkEvent(event) { data ->
                 Log.d("RealtimeEvent", "$event -> $data")
-                appendLog("SDK: ${event} : ${data}")
+//                appendLog("SDK: ${event} : ${data}")
             }
         }
     }

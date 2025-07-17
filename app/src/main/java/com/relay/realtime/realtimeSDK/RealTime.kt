@@ -98,23 +98,27 @@ class Realtime(private val context: Context, private val apiKey: String, private
                     }
                     ConnectionListener.Events.RECONNECTED -> {
                         isConnected.set(true)
-
-                        if (!isManuallyDisconnected.get()) {
-                            isReconnecting.set(false)
-                            emitSdk("RECONNECTED", "RECONNECTED")
-                            CoroutineScope(Dispatchers.IO).launch {
-                                resendOfflineMessages()
-                            }
+                        emitSdk("RECONNECT", "RECONNECTED")
+                        CoroutineScope(Dispatchers.IO).launch {
+                            println("subscribeToTopic: " + subscribedTopics)
+                            println("subscribeToTopic: " + subscribedTopics.size)
+//                            subscribeToTopics()
+                            resendOfflineMessages()
                         }
                     }
-                    ConnectionListener.Events.CLOSED,
+                    ConnectionListener.Events.CLOSED -> {
+                        isConnected.set(false)
+                        emitSdk("DISCONNECTED", "DISCONNECTED")
+                        offlineMessages.clear()
+                    }
                     ConnectionListener.Events.DISCONNECTED -> {
                         isConnected.set(false)
                         emitSdk("DISCONNECTED", "DISCONNECTED")
 
                         if (!isManuallyDisconnected.get()) {
-                            startZonedDateTime = Instant.ofEpochMilli(System.currentTimeMillis()).atZone(ZoneId.of("UTC"))
                             if (isReconnecting.compareAndSet(false, true)) {
+                                println("called me")
+                                startZonedDateTime = Instant.ofEpochMilli(System.currentTimeMillis()).atZone(ZoneId.of("UTC"))
                                 emitSdk("RECONNECT", "RECONNECTING")
                             }
                         } else {
@@ -154,11 +158,11 @@ class Realtime(private val context: Context, private val apiKey: String, private
             }
 
         } catch (e: ConnectException) {
-            if (debug) Log.e("Realtime", "Connection failed: ${e.message}")
+            logCatDebug("Connection failed: ${e.message}")
         } catch (e: IOException) {
-            if (debug) Log.e("Realtime", "IO error on connect: ${e.message}")
+            logCatDebug("IO error on connect: ${e.message}")
         } catch (e: Exception) {
-            if (debug) Log.e("Realtime", "Unexpected error: ${e.message}")
+            logCatDebug("Unexpected error: ${e.message}")
         }
     }
 
@@ -194,6 +198,8 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
     fun on(topic: String, listener: (JSONObject) -> Unit) {
         validateTopic(topic)
+        println("subscribedTopics: " + subscribedTopics)
+        println("natsConnection?.status: " + natsConnection?.status)
         if (subscribedTopics.contains(topic)) return
         subscribedTopics.add(topic)
         listeners[topic] = listener
@@ -213,7 +219,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
             try {
                 natsConnection?.jetStreamManagement()?.deleteConsumer(namespace, name)
             } catch (e: Exception) {
-                if (debug) Log.e("Realtime", "Failed to delete ephemeral consumer: ${e.message}")
+                logCatDebug("Failed to delete ephemeral consumer: ${e.message}")
             }
         }
         subscribedTopics.remove(topic)
@@ -258,7 +264,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
                 val jsm = natsConnection?.jetStreamManagement()
                 if (namespace != null) jsm?.deleteConsumer(namespace, consumerName)
             } catch (e: Exception) {
-                if (debug) Log.e("Realtime", "Failed to delete consumer: ${e.message}")
+                logCatDebug("Failed to delete consumer: ${e.message}")
             }
         }
         result
@@ -274,11 +280,12 @@ class Realtime(private val context: Context, private val apiKey: String, private
             natsConnection?.close()
             isConnected.set(false)
         } catch (e: Exception) {
-            if (debug) Log.e("Realtime", "Error on close: ${e.message}")
+            logCatDebug("Error on close: ${e.message}")
         }
     }
 
     private fun startConsumer(topic: String) {
+        println("startZonedDateTime: " +startZonedDateTime)
         val finalTopic = finalTopic(topic)
         val consumerConfig = ConsumerConfiguration.builder()
             .name(ephemeralConsumers[topic])
@@ -288,7 +295,10 @@ class Realtime(private val context: Context, private val apiKey: String, private
             .deliverPolicy(DeliverPolicy.ByStartTime)
             .replayPolicy(ReplayPolicy.Instant)
             .build()
-        val sub = jetStream?.subscribe(finalTopic, PushSubscribeOptions.builder().configuration(consumerConfig).build())
+
+        val sub = jetStream?.subscribe(finalTopic, PushSubscribeOptions.builder()
+            .configuration(consumerConfig)
+            .build())
 
         val job = CoroutineScope(Dispatchers.IO).launch {
             while (isActive && natsConnection?.status == Connection.Status.CONNECTED) {
@@ -299,7 +309,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
                     val msgClientId = unpacked.client_id
                     val room = unpacked.room
 
-                    if (reservedTopics.contains(topic) || (msgClientId != clientId && listeners.containsKey(room))) {
+                    if (msgClientId != clientId && listeners.containsKey(room)) {
                         msg.ack()
                         listeners[room]?.invoke(JSONObject().apply {
                             put("id", unpacked.id)
@@ -308,7 +318,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
                         logLatency(unpacked.start, receivedTime)
                     }
                 } catch (e: Exception) {
-                    if (debug) Log.e("Realtime", "Consumer error [$topic]: ${e.message}")
+                    logCatDebug("Consumer error [$topic]: ${e.message}")
                     break
                 }
             }
@@ -331,10 +341,18 @@ class Realtime(private val context: Context, private val apiKey: String, private
         val shouldFlush = latencyHistory.size >= 100 || force || (now - lastLatencyFlushTime) >= 30_000
         if (!shouldFlush) return
 
-        val payload = JSONObject().apply {
-            put("timezone", TimeZone.getDefault().id)
-            put("history", latencyHistory.toList())
-        }
+        println("latencyHistory.toList(): " + latencyHistory.toList())
+//        val payload = JSONObject().apply {
+//            put("timezone", TimeZone.getDefault().id)
+//            put("history", latencyHistory.toList())
+//        }
+
+
+        val payload = mapOf(
+            "timezone" to TimeZone.getDefault().id,
+            "history" to latencyHistory.toList()
+        )
+        println("payload: " + payload)
 
         val originalJson = JsonWriter.toJsonBytes(payload)
         natsConnection?.request("accounts.user.log_latency", originalJson, Duration.ofSeconds(5))
@@ -403,9 +421,13 @@ class Realtime(private val context: Context, private val apiKey: String, private
                 JSONObject(responseJson.getString("data"))
             } else null
         } catch (e: Exception) {
-            if (debug) Log.e("Realtime", "Namespace fetch failed: ${e.message}")
+            logCatDebug("Namespace fetch failed: ${e.message}")
             null
         }
+    }
+
+    private fun logCatDebug(message: String) {
+        if (debug) Log.e("Realtime", message)
     }
 
 
