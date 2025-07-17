@@ -195,6 +195,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
     fun on(topic: String, listener: (JSONObject) -> Unit) {
         validateTopic(topic)
         if (subscribedTopics.contains(topic)) return
+        subscribedTopics.add(topic)
         listeners[topic] = listener
         if (natsConnection?.status == Connection.Status.CONNECTED) {
             val consumerName = "consumer_${UUID.randomUUID()}"
