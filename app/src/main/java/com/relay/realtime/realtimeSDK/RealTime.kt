@@ -107,18 +107,19 @@ class Realtime(private val context: Context, private val apiKey: String, private
                             }
                         }
                     }
+                    ConnectionListener.Events.CLOSED,
                     ConnectionListener.Events.DISCONNECTED -> {
                         isConnected.set(false)
+                        emitSdk("DISCONNECTED", "DISCONNECTED")
+
                         if (!isManuallyDisconnected.get()) {
                             startZonedDateTime = Instant.ofEpochMilli(System.currentTimeMillis()).atZone(ZoneId.of("UTC"))
                             if (isReconnecting.compareAndSet(false, true)) {
-                                emitSdk("RECONNECTING", "RECONNECTING")
+                                emitSdk("RECONNECT", "RECONNECTING")
                             }
-                            emitSdk("RECONNECT", "RECONNECTING")
                         } else {
                             offlineMessages.clear()
                         }
-                        emitSdk("DISCONNECTED", "DISCONNECTED")
                     }
                     else -> {}
                 }
@@ -143,7 +144,6 @@ class Realtime(private val context: Context, private val apiKey: String, private
                 hash = namespaceData?.optString("hash")
             }
 
-            emitSdk("CONNECTED", "CONNECTED")
             subscribeToTopics()
 
             latencyTimerJob = CoroutineScope(Dispatchers.IO).launch {
@@ -155,13 +155,10 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
         } catch (e: ConnectException) {
             if (debug) Log.e("Realtime", "Connection failed: ${e.message}")
-            emitSdk("RECONN_FAIL", "CONNECTION_FAILED")
         } catch (e: IOException) {
             if (debug) Log.e("Realtime", "IO error on connect: ${e.message}")
-            emitSdk("RECONN_FAIL", "IO_EXCEPTION")
         } catch (e: Exception) {
             if (debug) Log.e("Realtime", "Unexpected error: ${e.message}")
-            emitSdk("RECONN_FAIL", "CONNECTION_ERROR")
         }
     }
 
@@ -186,7 +183,6 @@ class Realtime(private val context: Context, private val apiKey: String, private
         packer.writePayload(packed)
         packer.close()
 
-        println("isConnected: " + isConnected)
         if (isConnected.get()) {
             jetStream?.publish(NatsMessage.builder().subject(finalTopic).data(packer.toByteArray()).build())
             true
@@ -301,7 +297,8 @@ class Realtime(private val context: Context, private val apiKey: String, private
                     val unpacked = mapper.readValue(msg.data, MessageInfo::class.java)
                     val msgClientId = unpacked.client_id
                     val room = unpacked.room
-                    if (msgClientId != clientId && listeners.containsKey(room)) {
+
+                    if (reservedTopics.contains(topic) || (msgClientId != clientId && listeners.containsKey(room))) {
                         msg.ack()
                         listeners[room]?.invoke(JSONObject().apply {
                             put("id", unpacked.id)
@@ -383,6 +380,10 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
     private fun emitSdk(topic: String, message: String) {
         sdkListeners[topic]?.invoke(message)
+    }
+
+    fun onSdkEvent(event: String, listener: (Any) -> Unit) {
+        sdkListeners[event] = listener
     }
 
     private fun getRequestBody(): RequestBody {

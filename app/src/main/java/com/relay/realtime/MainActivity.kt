@@ -1,6 +1,7 @@
 package com.relay.realtime
 
 import android.os.Bundle
+import android.util.Log
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -114,13 +115,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         // SDK event listeners
-        CoroutineScope(Dispatchers.IO).launch {
-            realtime.on("CONNECTED") { appendLog("SDK: CONNECTED") }
-            realtime.on("DISCONNECTED") { appendLog("SDK: DISCONNECTED") }
-            realtime.on("RECONNECTED") { appendLog("SDK: RECONNECTED") }
-            realtime.on("MESSAGE_RESEND") { appendLog("SDK: MESSAGE_RESEND\n$it") }
+        registerRealtimeEvents(realtime)
+    }
+
+    private fun registerRealtimeEvents(realtime: Realtime) {
+        val sdkEvents = listOf("CONNECTED", "RECONNECTED", "DISCONNECTED", "RECONNECT", "RECONNECTING", "RECONN_FAIL", "MESSAGE_RESEND")
+
+        for (event in sdkEvents) {
+            realtime.onSdkEvent(event) { data ->
+                Log.d("RealtimeEvent", "$event -> $data")
+                appendLog("SDK: ${event} : ${data}")
+            }
         }
     }
+
 
     private fun appendLog(msg: String) {
         runOnUiThread {
