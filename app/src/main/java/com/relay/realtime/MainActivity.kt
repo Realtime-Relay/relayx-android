@@ -121,12 +121,35 @@ class MainActivity : AppCompatActivity() {
     private fun registerRealtimeEvents(realtime: Realtime) {
         val sdkEvents = listOf("CONNECTED", "RECONNECTED", "DISCONNECTED", "RECONNECT", "RECONNECTING", "RECONN_FAIL", "MESSAGE_RESEND")
 
-        for (event in sdkEvents) {
-            realtime.on(event) { data ->
-                Log.d("RealtimeEvent", "$event -> $data")
-                appendLog("SDK: ${event} : ${data}")
+        lifecycleScope.launch {
+            for (event in sdkEvents) {
+                realtime.on(event) { data ->
+                    appendLog("SDK: ${event} : ${data}")
+                }
+            }
+
+            realtime.on("hello.>") { data ->
+                appendLog(data.toString())
+            }
+
+            realtime.on("hello.*") { data ->
+                appendLog(data.toString())
+            }
+
+            realtime.on("hello.hey.*") { data ->
+                appendLog(data.toString())
+            }
+
+            realtime.on("hello.hey.>") { data ->
+                appendLog(data.toString())
+            }
+
+            realtime.on("hello.*.123") { data ->
+                appendLog(data.toString())
             }
         }
+
+
     }
 
 
