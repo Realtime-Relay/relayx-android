@@ -399,10 +399,10 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
     private fun emitSdk(topic: String, message: String) {
         sdkListeners[topic]?.invoke(message)
-    }
-
-    fun onSdkEvent(event: String, listener: (Any) -> Unit) {
-        sdkListeners[event] = listener
+        listeners[topic]?.invoke(JSONObject().apply {
+            put("Event", topic)
+            put("message", message)
+        })
     }
 
     private fun getRequestBody(): RequestBody {

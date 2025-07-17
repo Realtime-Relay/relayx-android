@@ -122,9 +122,9 @@ class MainActivity : AppCompatActivity() {
         val sdkEvents = listOf("CONNECTED", "RECONNECTED", "DISCONNECTED", "RECONNECT", "RECONNECTING", "RECONN_FAIL", "MESSAGE_RESEND")
 
         for (event in sdkEvents) {
-            realtime.onSdkEvent(event) { data ->
+            realtime.on(event) { data ->
                 Log.d("RealtimeEvent", "$event -> $data")
-//                appendLog("SDK: ${event} : ${data}")
+                appendLog("SDK: ${event} : ${data}")
             }
         }
     }
