@@ -506,8 +506,10 @@ private val callbackDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate
     }
 
     private fun resubscribeToTopics(){
-        deleteAllConsumers();
+        deleteAllConsumers()
         subscribeToTopics()
+
+        startZonedDateTime = null
     }
 
     // ---- Latency Logging ----
