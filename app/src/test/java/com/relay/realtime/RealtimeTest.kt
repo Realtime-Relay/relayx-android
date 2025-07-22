@@ -9,6 +9,7 @@ import org.junit.Assert.*
 import org.junit.runner.RunWith
 import org.mockito.Mock
 import org.mockito.junit.MockitoJUnitRunner
+import org.robolectric.shadows.ShadowLog
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.test.assertFailsWith
@@ -17,7 +18,7 @@ import kotlin.test.assertFailsWith
 @RunWith(MockitoJUnitRunner::class)
 class RealtimeTest {
 
-    private lateinit var realtime: Realtime
+    private lateinit var realtimeEnabled: Realtime
 
     @Mock
     private lateinit var context: Context
@@ -27,97 +28,98 @@ class RealtimeTest {
     private val staging = false
 
     @Before
-    fun setup() = runTest {
-        realtime = Realtime(
-            context = context,
-            apiKey = apiKey,
-            secretKey = secretKey
-        )
-        realtime.init(staging = staging, opts = mapOf("debug" to true))
-//        realtime.connect()
+    fun setup() {
+        ShadowLog.stream = System.out
+
+        runBlocking {
+            realtimeEnabled = Realtime(
+                context = context,
+                apiKey = apiKey,
+                secretKey = secretKey
+            )
+            realtimeEnabled.init(staging = staging, opts = mapOf("debug" to true))
+            realtimeEnabled.connect()
+        }
     }
 
     @After
     fun teardown() {
-        realtime.close()
+        runBlocking {
+            realtimeEnabled.close()
+        }
     }
 
-//    @Test
-//    fun `test throws error when no config is passed`() {
-//        val exception = assertThrows(IllegalArgumentException::class.java) {
-//            Realtime(context = context, apiKey = "", secretKey = "")
-//        }
-//        assertEquals("apiKey must not be empty", exception.message)
-//    }
-//
-//    @Test
-//    fun `test throws error when only apiKey is passed`() {
-//        val exception = assertThrows(IllegalArgumentException::class.java) {
-//            Realtime(context = context, apiKey = "KEY", secretKey = "")
-//        }
-//        assertEquals("secretKey must not be empty", exception.message)
-//    }
-//
-//    @Test
-//    fun `test throws error when only secretKey is passed`() {
-//        val exception = assertThrows(IllegalArgumentException::class.java) {
-//            Realtime(context = context, apiKey = "", secretKey = "SECRET")
-//        }
-//        assertEquals("apiKey must not be empty", exception.message)
-//    }
-//
-//    @Test
-//    fun `test throws error when null is passed`() {
-//        assertThrows(NullPointerException::class.java) {
-//            Realtime(context = context, apiKey = null!!, secretKey = null!!)
-//        }
-//    }
-//
-//    @Test
-//    fun `test init function with multiple configurations`() = runBlocking {
-//        val realtime = Realtime(context, apiKey, secretKey)
-//
-//        // init(true)
-//        realtime.init(true, mapOf())
-//        assertTrue(realtime.getStaging())
-//        assertEquals(emptyMap<String, Any>(), realtime.getOpts())
-//
-//        // init({ debug: true, max_retries: 2 })
-////        realtime.init(mapOf("debug" to true, "max_retries" to 2))
-////        assertFalse(realtime.getStaging())
-////        assertEquals(mapOf("debug" to true, "max_retries" to 2), realtime.getOpts())
-////        assertEquals(true, realtime.getOpts()?["debug"])
-////        assertEquals(2, realtime.getOpts()["max_retries"])
-////
-////        // init(true, { debug: false, max_retries: 2 })
-////        realtime.init(true, mapOf("debug" to false, "max_retries" to 2))
-////        assertTrue(realtime.getStaging())
-////        assertEquals(mapOf("debug" to false, "max_retries" to 2), realtime.getOpts())
-////        assertEquals(false, realtime.getOpts()["debug"])
-////        assertEquals(2, realtime.getOpts()["max_retries"])
-////
-////        // init(false)
-////        realtime.init(false)
-////        assertFalse(realtime.getStaging())
-////        assertEquals(emptyMap<String, Any>(), realtime.getOpts())
-////        assertNull(realtime.getOpts()["debug"])
-////        assertNull(realtime.getOpts()["max_retries"])
-////
-////        // init()
-////        realtime.init()
-////        assertFalse(realtime.getStaging())
-////        assertEquals(emptyMap<String, Any>(), realtime.getOpts())
-////        assertNull(realtime.getOpts()["debug"])
-////        assertNull(realtime.getOpts()["max_retries"])
-//    }
-//
-//    @Test
-//    fun `init sets flags correctly`() {
-//        val r = Realtime(context, apiKey, secretKey)
-//        r.init(staging, mapOf("debug" to true))
-//        assertTrue(r.checkIsConnected().not()) // Should not be connected yet
-//    }
-//
+    @Test
+    fun `test throws error when no config is passed`() {
+        val exception = assertThrows(IllegalArgumentException::class.java) {
+            Realtime(context = context, apiKey = "", secretKey = "")
+        }
+        assertEquals("apiKey must not be empty", exception.message)
+    }
+
+    @Test
+    fun `test throws error when only apiKey is passed`() {
+        val exception = assertThrows(IllegalArgumentException::class.java) {
+            Realtime(context = context, apiKey = "KEY", secretKey = "")
+        }
+        assertEquals("secretKey must not be empty", exception.message)
+    }
+
+    @Test
+    fun `test throws error when only secretKey is passed`() {
+        val exception = assertThrows(IllegalArgumentException::class.java) {
+            Realtime(context = context, apiKey = "", secretKey = "SECRET")
+        }
+        assertEquals("apiKey must not be empty", exception.message)
+    }
+
+    @Test
+    fun `test throws error when null is passed`() {
+        assertThrows(NullPointerException::class.java) {
+            Realtime(context = context, apiKey = null!!, secretKey = null!!)
+        }
+    }
+
+    @Test
+    fun `test init function with multiple configurations`() = runBlocking {
+        val realtime = Realtime(context, apiKey, secretKey)
+
+        // init(true)
+        realtime.init(true, mapOf())
+        assertTrue(realtime.getStaging())
+        assertEquals(emptyMap<String, Any>(), realtime.getOpts())
+
+        realtime.init(false, mapOf())
+        assertFalse(realtime.getStaging())
+        assertEquals(emptyMap<String, Any>(), realtime.getOpts())
+
+        realtime.init(false, mapOf("debug" to true, "max_retries" to 2))
+        assertFalse(realtime.getStaging())
+        assertEquals(mapOf("debug" to true, "max_retries" to 2), realtime.getOpts())
+        assertEquals(true, realtime.getOpts()?.get("debug"))
+        assertEquals(2, realtime.getOpts()?.get("max_retries"))
+
+        // init(true, { debug: false, max_retries: 2 })
+        realtime.init(true, mapOf("debug" to false, "max_retries" to 2))
+        assertTrue(realtime.getStaging())
+        assertEquals(mapOf("debug" to false, "max_retries" to 2), realtime.getOpts())
+        assertEquals(false, realtime.getOpts()?.get("debug"))
+        assertEquals(2, realtime.getOpts()?.get("max_retries"))
+    }
+
+    @Test
+    fun `init sets flags correctly`() {
+        val r = Realtime(context, apiKey, secretKey)
+        r.init(staging, mapOf("debug" to true))
+        assertTrue(r.checkIsConnected().not()) // Should not be connected yet
+    }
+
+    @Test
+    fun `Namespace values test`() {
+        assertTrue(realtimeEnabled.getNamespaceTest()?.length!! > 0)
+        assertTrue(realtimeEnabled.getHashTest()?.length!! > 0)
+    }
+
 //    @Test
 //    fun `publish works and stores offline message when not connected`() = runTest {
 //        val r = Realtime(context, apiKey, secretKey)
@@ -253,7 +255,7 @@ class RealtimeTest {
 //
 //        assertTrue(triggered)
 //    }
-
+//
 //    @Test
 //    fun `multiple on calls do not re-subscribe`() = runTest {
 //        val topic = "dedupe-topic"
@@ -305,7 +307,7 @@ class RealtimeTest {
 
         for (topic in unreservedInvalidTopics) {
             val err = assertThrows(IllegalArgumentException::class.java) {
-                realtime.validateTopic(topic)
+                realtimeEnabled.isTopicValid(topic)
             }
 
             assertEquals("Invalid topic", err.message)
@@ -346,7 +348,7 @@ class RealtimeTest {
 
         for (topic in unreservedValidTopics) {
             println(topic)
-            realtime.validateTopic(topic)
+            realtimeEnabled.isTopicValid(topic)
         }
     }
 
@@ -408,7 +410,7 @@ class RealtimeTest {
         cases.forEachIndexed { index, (tokenA, tokenB, expected) ->
             println("$tokenA  ⇆  $tokenB  → $expected")
 
-            val result = realtime.topicPatternMatcher(tokenA, tokenB)
+            val result = realtimeEnabled.topicPatternMatcher(tokenA, tokenB)
 
             assertEquals(expected, result)
         }

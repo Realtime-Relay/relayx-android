@@ -6,14 +6,18 @@ import android.net.NetworkCapabilities
 import android.util.Log
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import com.google.gson.Gson
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import com.relay.realtime.models.JsonWriter
+import com.relay.realtime.models.LatencyBody
 import com.relay.realtime.models.RequestBody
 import com.relay.realtime.realtimeSDK.Utils.createNatsCredsFile
 import io.nats.client.*
 import io.nats.client.api.*
 import io.nats.client.impl.NatsMessage
 import kotlinx.coroutines.*
-import org.json.JSONObject
+import kotlinx.serialization.json.Json
 import org.msgpack.core.MessageBufferPacker
 import org.msgpack.core.MessagePack
 import org.msgpack.jackson.dataformat.MessagePackFactory
@@ -35,11 +39,21 @@ import kotlin.math.log
 
 data class MessageInfo(val client_id: String, val id: String, val room: String, val message: Any, val start: Long)
 
-class Realtime(private val context: Context, private val apiKey: String, private val secretKey: String) {
+class Realtime @JvmOverloads constructor(
+private val context: Context,
+private val apiKey: String,
+private val secretKey: String,
+private val callbackDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate
+) {
 
-    init {
-        require(apiKey.isNotBlank()) { "apiKey must not be empty" }
-        require(secretKey.isNotBlank()) { "secretKey must not be empty" }
+    companion object{
+        val CONNECTED = "CONNECTED"
+        var RECONNECT = "RECONNECT"
+        val MESSAGE_RESEND = "MESSAGE_RESEND"
+        val DISCONNECTED = "DISCONNECTED"
+        val RECONNECTING = "RECONNECTING"
+        val RECONNECTED = "RECONNECTED"
+        val RECONN_FAIL = "RECONN_FAIL"
     }
 
     private var staging: Boolean = false
@@ -48,33 +62,43 @@ class Realtime(private val context: Context, private val apiKey: String, private
     private var clientId: String = ""
     private var natsConnection: Connection? = null
     private var jetStream: JetStream? = null
-    private var namespaceData: JSONObject? = null
+    private var namespaceData: JsonObject? = null
     private var namespace: String? = null
     private var hash: String? = null
 
     private val isConnected = AtomicBoolean(false)
     private val sdkListeners = ConcurrentHashMap<String, (Any) -> Unit>()
     private val subscribedTopics = CopyOnWriteArraySet<String>()
-    private val consumers = ConcurrentHashMap<String, Dispatcher>()
+    private val consumerMap = ConcurrentHashMap<String, ConsumerContext>()
     private val consumerJobs = ConcurrentHashMap<String, Job>()
     private val offlineMessages = Collections.synchronizedList(mutableListOf<MutableMap<String, Any?>>())
-    private val listeners = ConcurrentHashMap<String, (JSONObject) -> Unit>()
+    private val listeners = ConcurrentHashMap<String, (JsonObject) -> Unit>()
     private val isManuallyDisconnected = AtomicBoolean(false)
 
     private lateinit var mapper: ObjectMapper
-    private val reservedTopics = setOf("CONNECTED", "RECONNECT", "MESSAGE_RESEND", "DISCONNECTED", "RECONNECTING", "RECONNECTED", "RECONN_FAIL")
+    private val reservedTopics = setOf(CONNECTED, RECONNECT, MESSAGE_RESEND, DISCONNECTED, RECONNECTING, RECONNECTED, RECONN_FAIL)
     private val isReconnecting = AtomicBoolean(false)
     private val reconnStatusSent = AtomicBoolean(false)
     private val connectCalled = AtomicBoolean(false)
-    private val latencyHistory = CopyOnWriteArrayList<Map<String, Any>>()
+    private val latencyHistory = CopyOnWriteArrayList<JsonObject>()
     private var lastLatencyFlushTime = System.currentTimeMillis()
     private var latencyTimerJob: Job? = null
 
-    private var consumer: ConsumerContext? = null;
-
     private var startZonedDateTime: ZonedDateTime? = null
+
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val callbackScope = CoroutineScope(SupervisorJob() + callbackDispatcher)
+
+    init {
+        require(apiKey.isNotBlank()) { "apiKey must not be empty" }
+        require(secretKey.isNotBlank()) { "secretKey must not be empty" }
+    }
+
     fun init(staging: Boolean, opts: Map<String, Any>?) {
         requireNotNull(opts) { "Options map must not be null" }
+
+        this.opts = opts
+
         this.staging = staging
         debug = opts["debug"] as? Boolean ?: false
 
@@ -85,8 +109,6 @@ class Realtime(private val context: Context, private val apiKey: String, private
         if(connectCalled.get()){
             return@withContext
         }
-
-        connectCalled.set(true)
 
         val credsFile = createNatsCredsFile(context, apiKey, secretKey)
 
@@ -100,23 +122,38 @@ class Realtime(private val context: Context, private val apiKey: String, private
                 logCatDebug(type.name)
                 when (type) {
                     ConnectionListener.Events.CONNECTED -> {
-                        isConnected.set(true)
                         isManuallyDisconnected.set(false)
+                        isConnected.set(true)
 
-                        startZonedDateTime = Instant.ofEpochMilli(System.currentTimeMillis()).atZone(ZoneId.of("UTC"))
+                        namespaceData = getNamespace()
+                        logCatDebug(namespaceData.toString())
+                        if (namespaceData != null) {
+                            namespace = namespaceData?.get("namespace")?.asString
+                            hash = namespaceData?.get("hash")?.asString
+                        }
 
-                        emitSdk("CONNECTED", "CONNECTED")
+                        subscribeToTopics()
+
+                        connectCalled.set(true)
+
+                        emitSdk(CONNECTED, CONNECTED)
+
+                        latencyTimerJob = CoroutineScope(Dispatchers.IO).launch {
+                            while (isActive) {
+                                delay(30_000)
+                                flushLatencyLog(force = true)
+                            }
+                        }
                     }
                     ConnectionListener.Events.RECONNECTED -> {
                         isConnected.set(true)
                         isReconnecting.set(false)
                         reconnStatusSent.set(false)
 
-                        emitSdk("RECONNECT", "RECONNECTED")
+                        emitSdk(RECONNECT, RECONNECTED)
 
                         CoroutineScope(Dispatchers.IO).launch {
-                            deleteConsumer(consumer?.consumerName)
-                            subscribeToTopics()
+                            resubscribeToTopics()
 
                             resendOfflineMessages()
                         }
@@ -124,11 +161,14 @@ class Realtime(private val context: Context, private val apiKey: String, private
                     ConnectionListener.Events.CLOSED -> {
                         isConnected.set(false)
                         reconnStatusSent.set(false)
-
-                        emitSdk("DISCONNECTED", "DISCONNECTED")
+                        isReconnecting.set(false)
 
                         offlineMessages.clear()
                         connectCalled.set(false)
+
+                        startZonedDateTime = null
+
+                        emitSdk(DISCONNECTED, DISCONNECTED)
                     }
                     ConnectionListener.Events.DISCONNECTED -> {
                         // This actually calls when reconnection attempts are being made
@@ -141,7 +181,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
                             // Reinitializing this because we want to get missed messages
                             startZonedDateTime = Instant.ofEpochMilli(System.currentTimeMillis()).atZone(ZoneId.of("UTC"))
 
-                            emitSdk("RECONNECT", "RECONNECTING")
+                            emitSdk(RECONNECT, RECONNECTING)
                         }
                     }
                     else -> {}
@@ -150,7 +190,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
         // Use actual routable host instead of 0.0.0.0
         for (port in 4221..4223) {
-            val host = if (staging) "nats://staging.relay-x.io:$port" else "nats://api.relay-x.io:$port"
+            val host = if (staging) "nats://staging.relay-x.io:$port" else "tls://api2.relay-x.io:$port"
             builder.server(host)
         }
 
@@ -159,22 +199,6 @@ class Realtime(private val context: Context, private val apiKey: String, private
                 jetStream = it.jetStream()
                 clientId = it.serverInfo.clientId.toString()
             }
-
-            namespaceData = getNamespace()
-            if (namespaceData != null) {
-                namespace = namespaceData?.optString("namespace")
-                hash = namespaceData?.optString("hash")
-            }
-
-            subscribeToTopics()
-
-            latencyTimerJob = CoroutineScope(Dispatchers.IO).launch {
-                while (isActive) {
-                    delay(30_000)
-                    flushLatencyLog(force = true)
-                }
-            }
-
         } catch (e: ConnectException) {
             logCatDebug("Connection failed: ${e.message}")
         } catch (e: IOException) {
@@ -189,15 +213,14 @@ class Realtime(private val context: Context, private val apiKey: String, private
         validateEmptyMessage(message)
         validateMessage(message)
 
-        if (reservedTopics.contains(topic)) throw IllegalArgumentException("Reserved SDK topic: $topic")
+        if (reservedTopics.contains(topic)) throw IllegalArgumentException("Cannot publish to a reserved SDK topic: $topic")
 
         val finalTopic = finalTopic(topic)
-        val sendMessage = MessageInfo(client_id = clientId, id = UUID.randomUUID().toString(), room = topic, message = message, start = System.currentTimeMillis())
+        val sendMessage = MessageInfo(client_id = clientId, id = UUID.randomUUID().toString(), room = topic, message = message, start = Instant.now().toEpochMilli())
 
         if (!::mapper.isInitialized) {
             mapper = ObjectMapper(MessagePackFactory()).registerKotlinModule()
         }
-
 
         val packed: ByteArray = mapper.writeValueAsBytes(sendMessage)
         val packer: MessageBufferPacker = MessagePack.newDefaultBufferPacker()
@@ -205,15 +228,16 @@ class Realtime(private val context: Context, private val apiKey: String, private
         packer.close()
 
         if (isConnected.get()) {
-            jetStream?.publish(NatsMessage.builder().subject(finalTopic).data(packer.toByteArray()).build())
-            true
+            val ack = jetStream?.publish(NatsMessage.builder().subject(finalTopic).data(packer.toByteArray()).build())
+
+            return@withContext ack?.error == null;
         } else {
             offlineMessages.add(mutableMapOf("topic" to topic, "message" to message, "resent" to false))
             false
         }
     }
 
-    suspend fun on(topic: String, listener: (JSONObject) -> Unit) : Boolean = withContext(Dispatchers.IO) {
+    suspend fun on(topic: String, listener: (JsonObject) -> Unit) : Boolean = withContext(Dispatchers.IO) {
         validateTopic(topic)
 
         if(listeners.containsKey(topic)){
@@ -226,20 +250,24 @@ class Realtime(private val context: Context, private val apiKey: String, private
             subscribedTopics.add(topic)
 
             if(isConnected.get()){
-                startConsumer()
+                startConsumer(topic)
             }
         }
 
         return@withContext true
     }
 
-    fun off(topic: String) {
+    fun off(topic: String) : Boolean {
         validateTopic(topic)
         listeners.remove(topic)
         subscribedTopics.remove(topic)
 
-        if(subscribedTopics.size == 0){
-            deleteConsumer(consumer?.consumerName)
+        consumerJobs.remove(topic)?.cancel()
+
+        if(!reservedTopics.contains(topic)){
+            return deleteConsumer(topic)
+        }else{
+            return true
         }
     }
 
@@ -247,19 +275,20 @@ class Realtime(private val context: Context, private val apiKey: String, private
         validateTopic(topic)
         requireNotNull(start) { "Start date cannot be null" }
 
-        if (end != null && end < start) throw IllegalArgumentException("End date before start")
+        if (end != null && end <= start) throw IllegalArgumentException("End date <= start date")
+
         if (!isConnected.get()) return@withContext emptyList()
 
         val finalTopic = finalTopic(topic)
         val result = mutableListOf<Any>()
-        val consumerName = "history_consumer_${UUID.randomUUID()}"
+        val consumerName = "android_${UUID.randomUUID()}_history_consumer"
         val zonedDateTime = Instant.ofEpochMilli(start).atZone(ZoneId.of("UTC"))
 
         val config = ConsumerConfiguration.builder()
             .name(consumerName)
             .filterSubject(finalTopic)
             .startTime(zonedDateTime)
-            .ackPolicy(AckPolicy.None)
+            .ackPolicy(AckPolicy.Explicit)
             .deliverPolicy(DeliverPolicy.ByStartTime)
             .replayPolicy(ReplayPolicy.Instant)
             .build()
@@ -291,7 +320,12 @@ class Realtime(private val context: Context, private val apiKey: String, private
                             }
                         }
 
-                        result.add(unpacked.message)
+                        result.add(JsonObject().apply {
+                            addProperty("id", unpacked.id)
+                            addProperty("topic", unpacked.room)
+                            add("message", Gson().toJsonTree(unpacked.message))
+                            addProperty("timestamp", unpacked.start)
+                        })
                     }
 
                     if(breakOuter){
@@ -314,33 +348,45 @@ class Realtime(private val context: Context, private val apiKey: String, private
         result
     }
 
-    fun close() {
+    suspend fun close() = withContext(Dispatchers.IO) {
         try {
             isManuallyDisconnected.set(true)
+            isReconnecting.set(false)
+            connectCalled.set(false)
 
             latencyTimerJob?.cancel()
             latencyTimerJob = null
 
+            deleteAllConsumers();
+
             consumerJobs.values.forEach { it.cancel() }
             consumerJobs.clear()
+
+            offlineMessages.clear()
 
             natsConnection?.close()
             isConnected.set(false)
         } catch (e: Exception) {
-            logCatDebug("Error on close: ${e.message}")
+            logCatDebug("Error on close: ${e}")
         }
     }
 
     // ---- Internal Methods -----
 
-    private fun getNamespace(): JSONObject? {
+    private fun getNamespace(): JsonObject? {
         return try {
             val originalJson = JsonWriter.toJsonBytes(getRequestBody())
-            val responseMsg = natsConnection?.request("accounts.user.get_namespace", originalJson, Duration.ofSeconds(20))
+            val responseMsg = natsConnection?.request("accounts.user.get_namespace", originalJson, Duration.ofSeconds(5))
+
             val responseStr = String(responseMsg?.data ?: byteArrayOf(), StandardCharsets.UTF_8)
-            val responseJson = JSONObject(responseStr)
-            if (responseJson.getString("status") == "NAMESPACE_RETRIEVE_SUCCESS") {
-                JSONObject(responseJson.getString("data"))
+            logCatDebug(responseStr)
+
+            val responseJson = JsonParser.parseString(responseStr).asJsonObject
+
+            logCatDebug(responseJson)
+
+            if (responseJson.get("status").asString == "NAMESPACE_RETRIEVE_SUCCESS") {
+                responseJson.get("data").asJsonObject
             } else null
         } catch (e: Exception) {
             logCatDebug("Namespace fetch failed: ${e.message}")
@@ -349,86 +395,133 @@ class Realtime(private val context: Context, private val apiKey: String, private
     }
 
     // Consumers
-    private fun startConsumer() {
-        if(consumer != null){
-            return
-        }
+    private fun startConsumer(topic: String) {
+        val job = ioScope.launch {
+            val finalTopic = finalTopic(topic)
 
-        val finalTopic = finalTopic(">")
-        val consumerConfig = ConsumerConfiguration.builder()
-            .name("consumer_${UUID.randomUUID()}")
-            .filterSubject(finalTopic)
-            .ackPolicy(AckPolicy.Explicit)
-            .startTime(startZonedDateTime)
-            .deliverPolicy(DeliverPolicy.ByStartTime)
-            .replayPolicy(ReplayPolicy.Instant)
-            .build()
+            var startTime: ZonedDateTime?
 
-        val streamContext = jetStream?.getStreamContext(getStreamName())
-        consumer = streamContext?.createOrUpdateConsumer(consumerConfig);
+            if(startZonedDateTime != null){
+                startTime = startZonedDateTime
+            }else{
+                startTime = Instant.ofEpochMilli(System.currentTimeMillis()).atZone(ZoneId.of("UTC"))
+            }
 
-        consumer?.consume{ msg ->
-            val topic = stripTopicHash(msg.subject)
+            val consumerConfig = ConsumerConfiguration.builder()
+                .name("android_${UUID.randomUUID()}_consumer")
+                .filterSubject(finalTopic)
+                .ackPolicy(AckPolicy.Explicit)
+                .startTime(startTime)
+                .deliverPolicy(DeliverPolicy.ByStartTime)
+                .replayPolicy(ReplayPolicy.Instant)
+                .build()
 
-            try {
-                val receivedTime = System.currentTimeMillis()
+            val streamContext = jetStream?.getStreamContext(getStreamName())
+            val consumer = streamContext?.createOrUpdateConsumer(consumerConfig);
 
-                val unpacked = mapper.readValue(msg.data, MessageInfo::class.java)
-                val msgClientId = unpacked.client_id
+            consumer?.consume{ msg ->
+                val msgTopic = stripTopicHash(msg.subject)
 
-                logCatDebug(unpacked.toString())
+                try {
+                    val receivedTime = Instant.now().toEpochMilli()
+                    msg.inProgress();
 
-                if (msgClientId != clientId) {
-                    val topics = getCallbackTopics(topic)
-                    logCatDebug(topics.toString())
+                    val unpacked = mapper.readValue(msg.data, MessageInfo::class.java)
+                    val msgClientId = unpacked.client_id
 
-                    for(top in topics){
-                        logCatDebug("Listener => ${listeners.containsKey(top)}")
+                    logCatDebug("Sent => ${unpacked.start}")
+                    logCatDebug("Latency => ${receivedTime - unpacked.start}")
 
-                        listeners[top]?.invoke(JSONObject().apply {
-                            put("id", unpacked.id)
-                            put("topic", topic)
-                            put("message", unpacked.message)
-                        })
+                    logCatDebug(unpacked.toString())
+
+                    if (msgClientId != clientId) {
+                        val match = topicPatternMatcher(topic, msgTopic)
+                        logCatDebug("$topic || $msgTopic => $match")
+
+                        if(match){
+                            callbackScope.launch {
+                                listeners[topic]?.invoke(JsonObject().apply {
+                                    addProperty("id", unpacked.id)
+                                    addProperty("topic", msgTopic)
+                                    add("message", Gson().toJsonTree(unpacked.message))
+                                })
+                            }
+                        }
+
+                        logLatency(unpacked.start, receivedTime)
                     }
 
                     msg.ack()
-
-                    logLatency(unpacked.start, receivedTime)
+                } catch (e: Exception) {
+                    msg.nakWithDelay(Duration.ofSeconds(5))
+                    logCatDebug("Consumer error [$topic]: ${e.message}")
                 }
-            } catch (e: Exception) {
-                logCatDebug("Consumer error [$topic]: ${e.message}")
             }
+
+            consumerMap[topic] = consumer!!
         }
+
+        consumerJobs[topic] = job
     }
 
-    private fun deleteConsumer(consumerName: String?){
-        logCatDebug("Consumer to delete => " + consumerName)
+    private fun deleteConsumer(topic: String) : Boolean{
+        val consumer = consumerMap[topic]
 
         if(consumer != null){
-            logCatDebug("Deleting consumer....")
+            val consumerName = consumer.consumerName;
+
+            logCatDebug("Consumer to delete => $consumerName")
             try{
                 val streamContext = jetStream?.getStreamContext(getStreamName())
                 streamContext?.deleteConsumer(consumerName)
+
+                consumerMap.remove(topic)
+
+                logCatDebug("Consumer deleted => ${consumerName}")
+
+                return true
             }catch (e: Exception){
                 logCatDebug("ERR => " + e.message)
-            }
 
-            consumer = null
-            logCatDebug("Consumer deleted => ${consumerName}")
+                return false
+            }
+        }
+
+        return false
+    }
+
+    private fun deleteAllConsumers(){
+        for(topic in subscribedTopics){
+            deleteConsumer(topic)
         }
     }
 
     private fun subscribeToTopics() {
-        if (subscribedTopics.size > 0) {
-            startConsumer()
+        logCatDebug("Subscribing to topics...")
+        for(topic in subscribedTopics){
+            logCatDebug("Subscribing to $topic")
+            startConsumer(topic)
+            logCatDebug("Subscribed to $topic")
         }
+    }
+
+    private fun resubscribeToTopics(){
+        deleteAllConsumers();
+        subscribeToTopics()
     }
 
     // ---- Latency Logging ----
     private fun logLatency(sentTime: Long, receivedTime: Long) {
         val latency = receivedTime - sentTime
-        latencyHistory.add(mapOf("latency" to latency, "timestamp" to receivedTime))
+
+        if(latency <= 0){
+            return
+        }
+
+        latencyHistory.add(JsonObject().apply {
+            addProperty("latency", latency)
+            addProperty("timestamp", receivedTime)
+        })
         flushLatencyLog()
     }
 
@@ -439,23 +532,27 @@ class Realtime(private val context: Context, private val apiKey: String, private
         val shouldFlush = latencyHistory.size >= 100 || force || (now - lastLatencyFlushTime) >= 30_000
         if (!shouldFlush) return
 
-        println("latencyHistory.toList(): " + latencyHistory.toList())
-//        val payload = JSONObject().apply {
-//            put("timezone", TimeZone.getDefault().id)
-//            put("history", latencyHistory.toList())
-//        }
+        val timezone = TimeZone.getDefault().id;
+        val latencies = latencyHistory.toList();
 
+        val modelData = getLatencyBody(timezone, latencies)
 
-        val payload = mapOf(
-            "timezone" to TimeZone.getDefault().id,
-            "history" to latencyHistory.toList()
-        )
-        println("payload: " + payload)
+        val gson = Gson()
 
-        val originalJson = JsonWriter.toJsonBytes(payload)
-        natsConnection?.request("accounts.user.log_latency", originalJson, Duration.ofSeconds(5))
+        // We're doing this because we're converting from JSONObject to JsonObject
+        val payloadElement = JsonParser.parseString(modelData.payload.toString())
 
-        if (debug) Log.d("Realtime", "Published latency log with ${latencyHistory.size} entries")
+        val requestBody = JsonObject()
+        requestBody.addProperty("api_key", modelData.api_key)
+        requestBody.add("payload", payloadElement)
+
+        val payload = gson.toJson(requestBody).toByteArray(StandardCharsets.UTF_8)
+
+        val responseMsg = natsConnection?.request("accounts.user.log_latency", payload, Duration.ofSeconds(5))
+        val responseStr = String(responseMsg?.data ?: byteArrayOf(), StandardCharsets.UTF_8)
+        logCatDebug(responseStr)
+
+        logCatDebug("Published latency log with ${latencyHistory.size} entries")
 
         latencyHistory.clear()
         lastLatencyFlushTime = now
@@ -475,7 +572,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         }
         offlineMessages.clear()
 
-        listeners["MESSAGE_RESEND"]?.invoke(JSONObject(mapOf("data" to result)))
+        emitSdk(MESSAGE_RESEND, mapOf("data" to result))
     }
 
     // ---- Utility Function ----
@@ -558,7 +655,7 @@ class Realtime(private val context: Context, private val apiKey: String, private
         return true
     }
 
-    fun validateTopic(topic: String) {
+    private fun validateTopic(topic: String) {
         val topicNotNull = !topic.isBlank()
 
         val topicRegex = Regex("^(?!.*\\\$)(?:[A-Za-z0-9_*~-]+(?:\\.[A-Za-z0-9_*~-]+)*(?:\\.>)?|>)\$")
@@ -568,8 +665,22 @@ class Realtime(private val context: Context, private val apiKey: String, private
         require(spaceStarCheck && topicNotNull) { "Invalid topic" }
     }
 
+    fun isTopicValid(topic: String) {
+        val topicNotNull = !topic.isBlank()
+
+        val topicRegex = Regex("^(?!.*\\\$)(?:[A-Za-z0-9_*~-]+(?:\\.[A-Za-z0-9_*~-]+)*(?:\\.>)?|>)\$")
+
+        val spaceStarCheck = !topic.contains(" ") && topicRegex.matches(topic) && !reservedTopics.contains(topic)
+
+        require(spaceStarCheck && topicNotNull) { "Invalid topic" }
+    }
+
     private fun validateMessage(msg: Any) {
-        require(msg is String || msg is Number || msg is Map<*, *>) { "Message must be string, number or JSON" }
+        require(msg is String || msg is Number || msg is JsonObject) { "Message must be string, number or JSON" }
+    }
+
+    fun isMessageValid(msg: Any) {
+        require((msg is String || msg is Number || msg is Map<*, *>) && msg != null) { "Message must be string, number or JSON" }
     }
 
     private fun validateEmptyMessage(msg: Any) {
@@ -578,10 +689,12 @@ class Realtime(private val context: Context, private val apiKey: String, private
 
     private fun finalTopic(topic: String): String = "$hash.$topic"
 
-    private fun emitSdk(topic: String, message: String) {
-        listeners[topic]?.invoke(JSONObject().apply {
-            put("status", message)
-        })
+    private fun emitSdk(topic: String, message: Any) {
+        callbackScope.launch {
+            listeners[topic]?.invoke(JsonObject().apply {
+                add("data", Gson().toJsonTree(message))
+            })
+        }
     }
 
     private fun getRequestBody(): RequestBody {
@@ -590,15 +703,25 @@ class Realtime(private val context: Context, private val apiKey: String, private
         return requestBody
     }
 
-    private fun logCatDebug(message: String) {
-        if (debug) Log.i("RealtimeSDK", message)
+    private fun getLatencyBody(timeZone: String, history: List<JsonObject>) : LatencyBody {
+        val requestBody = LatencyBody()
+        requestBody.api_key = this.apiKey
+        requestBody.payload = JsonObject().apply {
+            addProperty("timezone", timeZone)
+            add("history", Gson().toJsonTree(history))
+        }
+        return requestBody
+    }
+
+    private fun logCatDebug(message: Any) {
+        if (debug) Log.i("RealtimeSDK", "$message")
     }
 
     fun checkIsConnected(): Boolean {
         return  isConnected.get()
     }
 
-    fun listenersList(): ConcurrentHashMap<String, (JSONObject) -> Unit> {
+    fun listenersList(): ConcurrentHashMap<String, (JsonObject) -> Unit> {
         return listeners
     }
 
@@ -613,6 +736,10 @@ class Realtime(private val context: Context, private val apiKey: String, private
     fun getOpts(): Map<String, Any>? {
         return opts
     }
+
+    fun getNamespaceTest(): String? = namespace
+
+    fun getHashTest(): String? = hash
 
     fun getStreamName(): String = "${namespace}_stream"
 

@@ -1,21 +1,22 @@
 package com.relay.realtime
 
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.os.Bundle
-import android.util.Log
+import android.os.IBinder
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.lifecycleScope
-import com.google.gson.Gson
-import com.relay.realtime.realtimeSDK.Realtime
-import com.relay.realtime.realtimeSDK.Utils
-import com.relay.realtime.realtimeSDK.Utils.createNatsCredsFile
-import kotlinx.coroutines.*
+import com.google.gson.JsonObject
+import org.json.JSONObject
 
+class MainActivity : AppCompatActivity(), RealtimeService.Listener {
 
-class MainActivity : AppCompatActivity() {
+    private var bound = false
+    private var svc: RealtimeService? = null
 
-    private lateinit var realtime: Realtime
-
+    // UI refs
     private lateinit var connectBtn: Button
     private lateinit var disconnectBtn: Button
     private lateinit var subscribeBtn: Button
@@ -24,16 +25,54 @@ class MainActivity : AppCompatActivity() {
     private lateinit var historyBtn: Button
     private lateinit var topicInput: EditText
     private lateinit var messageInput: EditText
-    private lateinit var messageLog: TextView
+    private lateinit var logView: TextView
 
-    private val scope = CoroutineScope(Dispatchers.IO)
-    private val logTag = "RealtimeUI"
+    // Service connection //////////////////////////////////////////////////////
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            svc = (binder as RealtimeService.LocalBinder).getService().apply {
+                setListener(this@MainActivity)
+            }
+            bound = true
+        }
 
+        override fun onServiceDisconnected(name: ComponentName?) {
+            bound = false
+            svc = null
+        }
+    }
+
+    // Lifecycle ////////////////////////////////////////////////////////////////
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main) // XML provided below
+        setContentView(R.layout.activity_main)
+        bindViews();
+        hookClicks()
+    }
 
-        // Bind views
+    override fun onStart() {
+        super.onStart()
+        Intent(this, RealtimeService::class.java).also {
+            bindService(it, connection, Context.BIND_AUTO_CREATE)
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (bound) {
+            svc?.setListener(null)
+            unbindService(connection)
+            bound = false
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Service lives on; activity merely unbinds.
+    }
+
+    // UI helpers ///////////////////////////////////////////////////////////////
+    private fun bindViews() {
         connectBtn = findViewById(R.id.connectBtn)
         disconnectBtn = findViewById(R.id.disconnectBtn)
         subscribeBtn = findViewById(R.id.subscribeBtn)
@@ -42,127 +81,51 @@ class MainActivity : AppCompatActivity() {
         historyBtn = findViewById(R.id.historyBtn)
         topicInput = findViewById(R.id.topicInput)
         messageInput = findViewById(R.id.messageInput)
-        messageLog = findViewById(R.id.messageLog)
+        logView = findViewById(R.id.messageLog)
+    }
 
-        // Init SDK
-        realtime = Realtime(this, Utils.API_KEY, Utils.SECRET_KEY)
-        realtime.init(staging = false, opts = mapOf("debug" to true))
-
-        // Event handlers
-        connectBtn.setOnClickListener {
-            scope.launch {
-                realtime.connect()
-                appendLog("Connected to Relay")
-            }
-        }
-
-        disconnectBtn.setOnClickListener {
-            realtime.close()
-            appendLog("Disconnected from Relay")
-        }
+    private fun hookClicks() {
+        connectBtn.setOnClickListener { svc?.connect() }
+        disconnectBtn.setOnClickListener { svc?.disconnect() }
 
         subscribeBtn.setOnClickListener {
             val topic = topicInput.text.toString().trim()
-            if (topic.isNotEmpty()) {
-                lifecycleScope.launch {
-                    realtime.on(topic) { msg ->
-                        appendLog("Message received: $msg")
-                    }
-                    appendLog("Subscribed to $topic")
-                }
-            }
+            if (topic.isNotEmpty()) svc?.subscribe(topic)
         }
 
         unsubscribeBtn.setOnClickListener {
             val topic = topicInput.text.toString().trim()
-            if (topic.isNotEmpty()) {
-                scope.launch {
-                    realtime.off(topic)
-                    appendLog("Unsubscribed to $topic")
-                }
-            }
+            if (topic.isNotEmpty()) svc?.unsubscribe(topic)
         }
 
         publishBtn.setOnClickListener {
             val topic = topicInput.text.toString().trim()
-            val message = messageInput.text.toString().trim()
-            if (topic.isNotEmpty() && message.isNotEmpty()) {
-                scope.launch {
-                    val success = realtime.publish(topic, message)
-                    appendLog("Message published: $success")
-                }
+            val msg = messageInput.text.toString().trim()
+            if (topic.isNotEmpty() && msg.isNotEmpty()) {
+                svc?.publish(topic, msg) { ok -> append("Publish → $ok") }
             }
         }
 
         historyBtn.setOnClickListener {
             val topic = topicInput.text.toString().trim()
             if (topic.isNotEmpty()) {
-                scope.launch {
-                    val fiveHoursAgoInMillis = System.currentTimeMillis() - (5 * 60 * 60 * 1000)
-
-                    val history = realtime.history(
-                        topic = topic,
-                        start = fiveHoursAgoInMillis,
-                        end = System.currentTimeMillis()
-                    )
-
-                    val gson = Gson()
-                    val jsonString = gson.toJson(history)
-
-                    appendLog("History:\n" + jsonString)
+                val since = System.currentTimeMillis() - 5 * 60 * 60 * 1_000
+                svc?.history(topic, since, System.currentTimeMillis()) { json ->
+                    append("History for $topic:\n$json")
                 }
             }
         }
-
-        // SDK event listeners
-        registerRealtimeEvents(realtime)
     }
 
-    private fun registerRealtimeEvents(realtime: Realtime) {
-        val sdkEvents = listOf("CONNECTED", "RECONNECTED", "DISCONNECTED", "RECONNECT", "RECONNECTING", "RECONN_FAIL", "MESSAGE_RESEND")
-
-        lifecycleScope.launch {
-            for (event in sdkEvents) {
-                realtime.on(event) { data ->
-                    appendLog("SDK: ${event} : ${data}")
-                }
-            }
-
-            realtime.on("hello.>") { data ->
-                appendLog(data.toString())
-            }
-
-            realtime.on("hello.*") { data ->
-                appendLog(data.toString())
-            }
-
-            realtime.on("hello.hey.*") { data ->
-                appendLog(data.toString())
-            }
-
-            realtime.on("hello.hey.>") { data ->
-                appendLog(data.toString())
-            }
-
-            realtime.on("hello.*.123") { data ->
-                appendLog(data.toString())
-            }
-        }
-
-
+    private fun append(text: String) {
+        runOnUiThread { logView.append("\n\n➤ $text") }
     }
 
-
-    private fun appendLog(msg: String) {
-        runOnUiThread {
-            messageLog.append("➤ $msg\n\n")
-        }
+    override fun onSdkEvent(event: String, payload: JsonObject) {
+        append("SDK • $event → $payload")
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        scope.cancel()
-        realtime.close()
+    override fun onMessage(topic: String, payload: JsonObject) {
+        append("$topic → $payload")
     }
-
 }

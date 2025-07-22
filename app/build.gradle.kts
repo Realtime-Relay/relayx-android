@@ -37,6 +37,12 @@ android {
     kotlinOptions {
         jvmTarget = "11"
     }
+
+    testOptions {
+        unitTests {
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 dependencies {
@@ -55,7 +61,7 @@ dependencies {
     implementation("io.nats:jnats:2.20.5")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.13.2")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.13.2")
-
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.0")
 
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.0")
     implementation("org.msgpack:jackson-dataformat-msgpack:0.9.9") // latest Jan 2025
@@ -85,6 +91,7 @@ dependencies {
 //    testImplementation("org.robolectric:robolectric:4.10.3")
 ////    testImplementation(kotlin("test"))
     testImplementation(kotlin("test"))
+    testImplementation("org.robolectric:robolectric:4.10.3")
 
 
 }
