@@ -1,4 +1,4 @@
-package com.relay.realtime.models;
+package com.realtime.relay.models;
 
 import java.util.Arrays;
 import java.util.List;

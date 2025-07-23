@@ -1,21 +1,21 @@
-package com.relay.realtime.realtimeSDK
+package com.realtime.relay
 
 import android.content.Context
-import com.google.gson.JsonObject
-import kotlinx.coroutines.*
+import com.realtime.relay.realtimeSDK.Realtime
+import com.realtime.relay.realtimeSDK.Utils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
-import org.json.JSONObject
-import org.junit.*
-import org.junit.Assert.*
+import org.junit.Assert
+import org.junit.Before
+import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mock
 import org.mockito.junit.MockitoJUnitRunner
 import org.robolectric.shadows.ShadowLog
 import java.lang.Exception
-import java.util.*
-import java.util.concurrent.ConcurrentHashMap
-import kotlin.collections.mapOf
-import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -38,31 +38,31 @@ class RealtimeTest {
 
     @Test
     fun `No API & Secret Key`() {
-        val exception = assertThrows(IllegalArgumentException::class.java) {
+        val exception = Assert.assertThrows(IllegalArgumentException::class.java) {
             Realtime(context = context, apiKey = "", secretKey = "")
         }
-        assertEquals("apiKey must not be empty", exception.message)
+        Assert.assertEquals("apiKey must not be empty", exception.message)
     }
 
     @Test
     fun `Only API Key Passed`() {
-        val exception = assertThrows(IllegalArgumentException::class.java) {
+        val exception = Assert.assertThrows(IllegalArgumentException::class.java) {
             Realtime(context = context, apiKey = "KEY", secretKey = "")
         }
-        assertEquals("secretKey must not be empty", exception.message)
+        Assert.assertEquals("secretKey must not be empty", exception.message)
     }
 
     @Test
     fun `Only Secret Key Passed`() {
-        val exception = assertThrows(IllegalArgumentException::class.java) {
+        val exception = Assert.assertThrows(IllegalArgumentException::class.java) {
             Realtime(context = context, apiKey = "", secretKey = "SECRET")
         }
-        assertEquals("apiKey must not be empty", exception.message)
+        Assert.assertEquals("apiKey must not be empty", exception.message)
     }
 
     @Test
     fun `Null Keys Passed to Constructor`() {
-        assertThrows(NullPointerException::class.java) {
+        Assert.assertThrows(NullPointerException::class.java) {
             Realtime(context = context, apiKey = null!!, secretKey = null!!)
         }
     }
@@ -74,24 +74,24 @@ class RealtimeTest {
         // init(true)
         realtime.init(true, mapOf())
         assertTrue(realtime.getStaging())
-        assertEquals(emptyMap<String, Any>(), realtime.getOpts())
+        Assert.assertEquals(emptyMap<String, Any>(), realtime.getOpts())
 
         realtime.init(false, mapOf())
-        assertFalse(realtime.getStaging())
-        assertEquals(emptyMap<String, Any>(), realtime.getOpts())
+        Assert.assertFalse(realtime.getStaging())
+        Assert.assertEquals(emptyMap<String, Any>(), realtime.getOpts())
 
         realtime.init(false, mapOf("debug" to true, "max_retries" to 2))
-        assertFalse(realtime.getStaging())
-        assertEquals(mapOf("debug" to true, "max_retries" to 2), realtime.getOpts())
-        assertEquals(true, realtime.getOpts()?.get("debug"))
-        assertEquals(2, realtime.getOpts()?.get("max_retries"))
+        Assert.assertFalse(realtime.getStaging())
+        Assert.assertEquals(mapOf("debug" to true, "max_retries" to 2), realtime.getOpts())
+        Assert.assertEquals(true, realtime.getOpts()?.get("debug"))
+        Assert.assertEquals(2, realtime.getOpts()?.get("max_retries"))
 
         // init(true, { debug: false, max_retries: 2 })
         realtime.init(true, mapOf("debug" to false, "max_retries" to 2))
         assertTrue(realtime.getStaging())
-        assertEquals(mapOf("debug" to false, "max_retries" to 2), realtime.getOpts())
-        assertEquals(false, realtime.getOpts()?.get("debug"))
-        assertEquals(2, realtime.getOpts()?.get("max_retries"))
+        Assert.assertEquals(mapOf("debug" to false, "max_retries" to 2), realtime.getOpts())
+        Assert.assertEquals(false, realtime.getOpts()?.get("debug"))
+        Assert.assertEquals(2, realtime.getOpts()?.get("max_retries"))
     }
 
     @Test
@@ -174,7 +174,6 @@ class RealtimeTest {
 
             for (topic in unreservedValidTopics) {
                 var sent = realtimeEnabled.publish(topic, mapOf("data" to "Hello World!"))
-
                 assertTrue(sent)
 
                 sent = realtimeEnabled.publish(topic, "HEY!")
@@ -229,15 +228,16 @@ class RealtimeTest {
             "foo>"
         )
 
-        for(topic in unreservedInvalidTopics){
-            val exception = assertThrows(IllegalArgumentException::class.java) {
+        for (topic in unreservedInvalidTopics) {
+            val exception = Assert.assertThrows(IllegalArgumentException::class.java) {
                 runBlocking {
-                    val realtime = Realtime(context = context, apiKey = "<KEY>", secretKey = "<KEY>")
+                    val realtime =
+                        Realtime(context = context, apiKey = "<KEY>", secretKey = "<KEY>")
 
                     realtime.publish(topic, "hey")
                 }
             }
-            assertEquals("Invalid topic", exception.message)
+            Assert.assertEquals("Invalid topic", exception.message)
         }
 
         val invalidMessages = mutableListOf(
@@ -248,20 +248,26 @@ class RealtimeTest {
             Pair(1, "two"),                 // Pair / Tuple
             ByteArray(4),                   // Byte array (raw binary)
             Unit,                           // Kotlin Unit object
-            object { val x = 1 },           // Anonymous object
+            object {
+                val x = 1
+            },           // Anonymous object
             IllegalStateException("boom"),  // Throwable / arbitrary class
         )
 
-        for(message in invalidMessages){
-            val exception = assertThrows(Exception::class.java) {
+        for (message in invalidMessages) {
+            val exception = Assert.assertThrows(Exception::class.java) {
                 runBlocking {
-                    val realtime = Realtime(context = context, apiKey = "<KEY>", secretKey = "<KEY>")
+                    val realtime =
+                        Realtime(context = context, apiKey = "<KEY>", secretKey = "<KEY>")
 
                     println(message)
                     realtime.publish("topic", message!!)
                 }
             }
-            assertEquals("Message must be string, number or Map<String, String | Number | Map>", exception.message)
+            Assert.assertEquals(
+                "Message must be string, number or Map<String, String | Number | Map>",
+                exception.message
+            )
         }
     }
 
@@ -271,7 +277,7 @@ class RealtimeTest {
             val realtime = Realtime(context = context, apiKey = "<KEY>", secretKey = "<KEY>")
 
             var sent = realtime.publish("topic", "Hey what's up?")
-            assertFalse(sent)
+            Assert.assertFalse(sent)
         }
     }
 
@@ -314,26 +320,26 @@ class RealtimeTest {
         runBlocking {
             val realtime = Realtime(context = context, apiKey = "<KEY>", secretKey = "<KEY>")
 
-            for(topic in reserved){
+            for (topic in reserved) {
                 var init = realtime.on(topic, {})
                 assertTrue(init)
             }
 
             // Running it again but now it should be false since the topics are already initialized
-            for(topic in reserved){
+            for (topic in reserved) {
                 var init = realtime.on(topic, {})
-                assertFalse(init)
+                Assert.assertFalse(init)
             }
 
-            for(topic in unreservedValidTopics){
+            for (topic in unreservedValidTopics) {
                 var init = realtime.on(topic, {})
                 assertTrue(init)
             }
 
             // Running it again but now it should be false since the topics are already initialized
-            for(topic in unreservedValidTopics){
+            for (topic in unreservedValidTopics) {
                 var init = realtime.on(topic, {})
-                assertFalse(init)
+                Assert.assertFalse(init)
             }
         }
     }
@@ -378,13 +384,13 @@ class RealtimeTest {
         runBlocking {
             val realtime = Realtime(context = context, apiKey = "<KEY>", secretKey = "<KEY>")
 
-            for(topic in unreservedInvalidTopics){
-                val exception = assertThrows(IllegalArgumentException::class.java) {
+            for (topic in unreservedInvalidTopics) {
+                val exception = Assert.assertThrows(IllegalArgumentException::class.java) {
                     runBlocking {
                         realtime.on(topic, {})
                     }
                 }
-                assertEquals("Invalid topic", exception.message)
+                Assert.assertEquals("Invalid topic", exception.message)
             }
         }
     }
@@ -427,7 +433,7 @@ class RealtimeTest {
         runBlocking {
             val realtime = Realtime(context = context, apiKey = "<KEY>", secretKey = "<KEY>")
 
-            for(topic in unreservedValidTopics){
+            for (topic in unreservedValidTopics) {
                 realtime.off(topic)
             }
 
@@ -479,11 +485,11 @@ class RealtimeTest {
         runBlocking {
             val realtime = Realtime(context = context, apiKey = "<KEY>", secretKey = "<KEY>")
 
-            for(topic in unreservedValidTopics){
-                val exception = assertThrows(IllegalArgumentException::class.java) {
+            for (topic in unreservedValidTopics) {
+                val exception = Assert.assertThrows(IllegalArgumentException::class.java) {
                     realtime.off(topic)
                 }
-                assertEquals("Invalid topic", exception.message)
+                Assert.assertEquals("Invalid topic", exception.message)
             }
         }
     }
@@ -505,12 +511,12 @@ class RealtimeTest {
 
             assertTrue(result.size == 0)
 
-            var exception = assertThrows(Exception::class.java) {
+            var exception = Assert.assertThrows(Exception::class.java) {
                 runBlocking {
                     realtimeEnabled.history("hello", end, since)
                 }
             }
-            assertEquals("End date <= start date", exception.message)
+            Assert.assertEquals("End date <= start date", exception.message)
 
             realtimeEnabled.connect()
 
@@ -563,11 +569,11 @@ class RealtimeTest {
         )
 
         for (topic in unreservedInvalidTopics) {
-            val err = assertThrows(IllegalArgumentException::class.java) {
+            val err = Assert.assertThrows(IllegalArgumentException::class.java) {
                 realtime.isTopicValid(topic)
             }
 
-            assertEquals("Invalid topic", err.message)
+            Assert.assertEquals("Invalid topic", err.message)
         }
 
         val unreservedValidTopics = mutableListOf(
@@ -614,56 +620,56 @@ class RealtimeTest {
         val realtime = Realtime(context, apiKey, secretKey)
 
         val cases: List<Triple<String, String, Boolean>> = listOf(
-            Triple("foo",                 "foo",                      true),   // 1
-            Triple("foo",                 "bar",                      false),  // 2
-            Triple("foo.*",               "foo.bar",                  true),   // 3
-            Triple("foo.bar",             "foo.*",                    true),   // 4
-            Triple("*",                   "token",                    true),   // 5
-            Triple("*",                   "*",                        true),   // 6
-            Triple("foo.*",               "foo.bar.baz",              false),  // 7
-            Triple("foo.>",               "foo.bar.baz",              true),   // 8
-            Triple("foo.>",               "foo",                      false),  // 9
-            Triple("foo.bar.baz",         "foo.>",                    true),   // 10
-            Triple("foo.bar.>",           "foo.bar",                  false),  // 11
-            Triple("foo",                 "foo.>",                    false),  // 12
-            Triple("foo.*.>",             "foo.bar.baz.qux",          true),   // 13
-            Triple("foo.*.baz",           "foo.bar.>",                true),   // 14
-            Triple("alpha.*",             "beta.gamma",               false),  // 15
-            Triple("alpha.beta",          "alpha.*.*",                false),  // 16
-            Triple("foo.>.bar",           "foo.any.bar",              false),  // 17
-            Triple(">",                   "foo.bar",                  true),   // 18
-            Triple(">",                   ">",                        true),   // 19
-            Triple("*",                   ">",                        true),   // 20
-            Triple("*.>",                 "foo.bar",                  true),   // 21
-            Triple("*.*.*",               "a.b.c",                    true),   // 22
-            Triple("*.*.*",               "a.b",                      false),  // 23
-            Triple("a.b.c.d.e",           "a.b.c.d.e",                true),   // 24
-            Triple("a.b.c.d.e",           "a.b.c.d.f",                false),  // 25
-            Triple("a.b.*.d",             "a.b.c.d",                  true),   // 26
-            Triple("a.b.*.d",             "a.b.c.e",                  false),  // 27
-            Triple("a.b.>",               "a.b",                      false),  // 28
-            Triple("a.b",                 "a.b.c.d.>",               false),  // 29
-            Triple("a.b.>.c",             "a.b.x.c",                  false),  // 30
-            Triple("a.*.*",               "a.b",                      false),  // 31
-            Triple("a.*",                 "a.b.c",                    false),  // 32
-            Triple("metrics.cpu.load",    "metrics.*.load",           true),   // 33
-            Triple("metrics.cpu.load",    "metrics.cpu.*",            true),   // 34
-            Triple("metrics.cpu.load",    "metrics.>.load",           false),  // 35
-            Triple("metrics.>",           "metrics",                  false),  // 36
-            Triple("metrics.>",           "othermetrics.cpu",         false),  // 37
-            Triple("*.*.>",               "a.b",                      false),  // 38
-            Triple("*.*.>",               "a.b.c.d",                  true),   // 39
-            Triple("a.b.c",               "*.*.*",                    true),   // 40
-            Triple("a.b.c",               "*.*",                      false),  // 41
-            Triple("alpha.*.>",           "alpha",                    false),  // 42
-            Triple("alpha.*.>",           "alpha.beta",               false),  // 43
-            Triple("alpha.*.>",           "alpha.beta.gamma",         true),   // 44
-            Triple("alpha.*.>",           "beta.alpha.gamma",         false),  // 45
-            Triple("foo-bar_baz",         "foo-bar_baz",              true),   // 46
-            Triple("foo-bar_*",           "foo-bar_123",              false),  // 47
-            Triple("foo-bar_*",           "foo-bar_*",                true),   // 48
-            Triple("order-*",             "order-123",                false),  // 49
-            Triple("hello.hey.*",         "hello.hey.>",              true)     // 50
+            Triple("foo", "foo", true),   // 1
+            Triple("foo", "bar", false),  // 2
+            Triple("foo.*", "foo.bar", true),   // 3
+            Triple("foo.bar", "foo.*", true),   // 4
+            Triple("*", "token", true),   // 5
+            Triple("*", "*", true),   // 6
+            Triple("foo.*", "foo.bar.baz", false),  // 7
+            Triple("foo.>", "foo.bar.baz", true),   // 8
+            Triple("foo.>", "foo", false),  // 9
+            Triple("foo.bar.baz", "foo.>", true),   // 10
+            Triple("foo.bar.>", "foo.bar", false),  // 11
+            Triple("foo", "foo.>", false),  // 12
+            Triple("foo.*.>", "foo.bar.baz.qux", true),   // 13
+            Triple("foo.*.baz", "foo.bar.>", true),   // 14
+            Triple("alpha.*", "beta.gamma", false),  // 15
+            Triple("alpha.beta", "alpha.*.*", false),  // 16
+            Triple("foo.>.bar", "foo.any.bar", false),  // 17
+            Triple(">", "foo.bar", true),   // 18
+            Triple(">", ">", true),   // 19
+            Triple("*", ">", true),   // 20
+            Triple("*.>", "foo.bar", true),   // 21
+            Triple("*.*.*", "a.b.c", true),   // 22
+            Triple("*.*.*", "a.b", false),  // 23
+            Triple("a.b.c.d.e", "a.b.c.d.e", true),   // 24
+            Triple("a.b.c.d.e", "a.b.c.d.f", false),  // 25
+            Triple("a.b.*.d", "a.b.c.d", true),   // 26
+            Triple("a.b.*.d", "a.b.c.e", false),  // 27
+            Triple("a.b.>", "a.b", false),  // 28
+            Triple("a.b", "a.b.c.d.>", false),  // 29
+            Triple("a.b.>.c", "a.b.x.c", false),  // 30
+            Triple("a.*.*", "a.b", false),  // 31
+            Triple("a.*", "a.b.c", false),  // 32
+            Triple("metrics.cpu.load", "metrics.*.load", true),   // 33
+            Triple("metrics.cpu.load", "metrics.cpu.*", true),   // 34
+            Triple("metrics.cpu.load", "metrics.>.load", false),  // 35
+            Triple("metrics.>", "metrics", false),  // 36
+            Triple("metrics.>", "othermetrics.cpu", false),  // 37
+            Triple("*.*.>", "a.b", false),  // 38
+            Triple("*.*.>", "a.b.c.d", true),   // 39
+            Triple("a.b.c", "*.*.*", true),   // 40
+            Triple("a.b.c", "*.*", false),  // 41
+            Triple("alpha.*.>", "alpha", false),  // 42
+            Triple("alpha.*.>", "alpha.beta", false),  // 43
+            Triple("alpha.*.>", "alpha.beta.gamma", true),   // 44
+            Triple("alpha.*.>", "beta.alpha.gamma", false),  // 45
+            Triple("foo-bar_baz", "foo-bar_baz", true),   // 46
+            Triple("foo-bar_*", "foo-bar_123", false),  // 47
+            Triple("foo-bar_*", "foo-bar_*", true),   // 48
+            Triple("order-*", "order-123", false),  // 49
+            Triple("hello.hey.*", "hello.hey.>", true)     // 50
         )
 
         cases.forEachIndexed { index, (tokenA, tokenB, expected) ->
@@ -671,7 +677,7 @@ class RealtimeTest {
 
             val result = realtime.topicPatternMatcher(tokenA, tokenB)
 
-            assertEquals(expected, result)
+            Assert.assertEquals(expected, result)
         }
 
     }

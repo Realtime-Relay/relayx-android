@@ -1,4 +1,4 @@
-package com.relay.realtime.models;
+package com.realtime.relay.models;
 
 import com.google.gson.JsonObject;
 

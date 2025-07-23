@@ -1,24 +1,20 @@
-package com.relay.realtime.realtimeSDK
+package com.realtime.relay.realtimeSDK
 
 import android.content.Context
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.util.Log
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import com.relay.realtime.models.JsonWriter
-import com.relay.realtime.models.LatencyBody
-import com.relay.realtime.models.RequestBody
-import com.relay.realtime.realtimeSDK.Utils.createNatsCredsFile
+import com.realtime.relay.models.JsonWriter
+import com.realtime.relay.models.LatencyBody
+import com.realtime.relay.models.RequestBody
+import com.realtime.relay.realtimeSDK.Utils.createNatsCredsFile
 import io.nats.client.*
 import io.nats.client.api.*
 import io.nats.client.impl.NatsMessage
 import kotlinx.coroutines.*
-import kotlinx.serialization.json.Json
-import org.json.JSONObject
 import org.msgpack.core.MessageBufferPacker
 import org.msgpack.core.MessagePack
 import org.msgpack.jackson.dataformat.MessagePackFactory
@@ -35,7 +31,6 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.collections.mutableListOf
-import kotlin.math.log
 
 
 data class MessageInfo(val client_id: String, val id: String, val room: String, val message: Any, val start: Long)

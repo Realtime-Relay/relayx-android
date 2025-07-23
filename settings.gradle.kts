@@ -21,3 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "RealTime"
 include(":app")
+include(":realtimeSDK")

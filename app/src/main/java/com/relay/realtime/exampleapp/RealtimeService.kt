@@ -7,8 +7,8 @@ import android.os.IBinder
 import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonObject
-import com.relay.realtime.realtimeSDK.Realtime
-import com.relay.realtime.realtimeSDK.Utils
+import com.realtime.relay.realtimeSDK.Realtime
+import com.realtime.relay.realtimeSDK.Utils
 import kotlinx.coroutines.*
 
 class RealtimeService : Service(), CoroutineScope by CoroutineScope(SupervisorJob() + Dispatchers.IO) {

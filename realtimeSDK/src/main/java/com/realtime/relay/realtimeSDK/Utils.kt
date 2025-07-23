@@ -1,4 +1,4 @@
-package com.relay.realtime.realtimeSDK
+package com.realtime.relay.realtimeSDK
 
 import android.content.Context
 import java.io.File
