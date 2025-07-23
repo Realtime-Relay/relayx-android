@@ -18,6 +18,7 @@ import io.nats.client.api.*
 import io.nats.client.impl.NatsMessage
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.Json
+import org.json.JSONObject
 import org.msgpack.core.MessageBufferPacker
 import org.msgpack.core.MessagePack
 import org.msgpack.jackson.dataformat.MessagePackFactory
@@ -678,11 +679,11 @@ private val callbackDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate
     }
 
     private fun validateMessage(msg: Any) {
-        require(msg is String || msg is Number || msg is JsonObject) { "Message must be string, number or JSON" }
+        require(msg is String || msg is Number || msg is Map<*, *>) { "Message must be string, number or Map<String, String | Number | Map>" }
     }
 
     fun isMessageValid(msg: Any) {
-        require((msg is String || msg is Number || msg is Map<*, *>) && msg != null) { "Message must be string, number or JSON" }
+        require(msg is String || msg is Number || msg is Map<*, *>) { "Message must be string, number or Map<String, String | Number | Map>" }
     }
 
     private fun validateEmptyMessage(msg: Any) {
@@ -720,11 +721,7 @@ private val callbackDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate
     }
 
     fun checkIsConnected(): Boolean {
-        return  isConnected.get()
-    }
-
-    fun listenersList(): ConcurrentHashMap<String, (JsonObject) -> Unit> {
-        return listeners
+        return isConnected.get()
     }
 
     fun flushLatencyLogPublic(force: Boolean) {
@@ -739,9 +736,14 @@ private val callbackDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate
         return opts
     }
 
-    fun getNamespaceTest(): String? = namespace
+    fun getNamespaceTest(): String? {
+        logCatDebug("IS CONNECTED => ${checkIsConnected()}")
+        return namespace;
+    }
 
-    fun getHashTest(): String? = hash
+    fun getHashTest(): String? {
+        return hash;
+    }
 
     fun getStreamName(): String = "${namespace}_stream"
 

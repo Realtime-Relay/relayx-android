@@ -1,6 +1,7 @@
 package com.relay.realtime.realtimeSDK
 
 import android.content.Context
+import com.google.gson.JsonObject
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
@@ -10,9 +11,12 @@ import org.junit.runner.RunWith
 import org.mockito.Mock
 import org.mockito.junit.MockitoJUnitRunner
 import org.robolectric.shadows.ShadowLog
+import java.lang.Exception
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.collections.mapOf
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(MockitoJUnitRunner::class)
@@ -30,27 +34,10 @@ class RealtimeTest {
     @Before
     fun setup() {
         ShadowLog.stream = System.out
-
-        runBlocking {
-            realtimeEnabled = Realtime(
-                context = context,
-                apiKey = apiKey,
-                secretKey = secretKey
-            )
-            realtimeEnabled.init(staging = staging, opts = mapOf("debug" to true))
-            realtimeEnabled.connect()
-        }
-    }
-
-    @After
-    fun teardown() {
-        runBlocking {
-            realtimeEnabled.close()
-        }
     }
 
     @Test
-    fun `test throws error when no config is passed`() {
+    fun `No API & Secret Key`() {
         val exception = assertThrows(IllegalArgumentException::class.java) {
             Realtime(context = context, apiKey = "", secretKey = "")
         }
@@ -58,7 +45,7 @@ class RealtimeTest {
     }
 
     @Test
-    fun `test throws error when only apiKey is passed`() {
+    fun `Only API Key Passed`() {
         val exception = assertThrows(IllegalArgumentException::class.java) {
             Realtime(context = context, apiKey = "KEY", secretKey = "")
         }
@@ -66,7 +53,7 @@ class RealtimeTest {
     }
 
     @Test
-    fun `test throws error when only secretKey is passed`() {
+    fun `Only Secret Key Passed`() {
         val exception = assertThrows(IllegalArgumentException::class.java) {
             Realtime(context = context, apiKey = "", secretKey = "SECRET")
         }
@@ -74,14 +61,14 @@ class RealtimeTest {
     }
 
     @Test
-    fun `test throws error when null is passed`() {
+    fun `Null Keys Passed to Constructor`() {
         assertThrows(NullPointerException::class.java) {
             Realtime(context = context, apiKey = null!!, secretKey = null!!)
         }
     }
 
     @Test
-    fun `test init function with multiple configurations`() = runBlocking {
+    fun `init() Test with Multiple Configurations`() = runBlocking {
         val realtime = Realtime(context, apiKey, secretKey)
 
         // init(true)
@@ -116,160 +103,395 @@ class RealtimeTest {
 
     @Test
     fun `Namespace values test`() {
-        assertTrue(realtimeEnabled.getNamespaceTest()?.length!! > 0)
-        assertTrue(realtimeEnabled.getHashTest()?.length!! > 0)
+        runBlocking {
+            realtimeEnabled = Realtime(
+                context = context,
+                apiKey = apiKey,
+                secretKey = secretKey,
+                callbackDispatcher = Dispatchers.Unconfined
+            )
+            realtimeEnabled.init(staging = staging, opts = mapOf("debug" to true))
+            realtimeEnabled.connect()
+
+            // Delay so that the connection takes place & getNamespace() is called
+            delay(5000)
+
+            assertTrue(realtimeEnabled.checkIsConnected())
+
+            assertTrue(realtimeEnabled.getNamespaceTest()?.length!! > 0)
+            assertTrue(realtimeEnabled.getHashTest()?.length!! > 0)
+
+            realtimeEnabled.close()
+        }
     }
 
-//    @Test
-//    fun `publish works and stores offline message when not connected`() = runTest {
-//        val r = Realtime(context, apiKey, secretKey)
-//        r.init(staging, mapOf("debug" to true))
-//
-//        println("Offline: " + r.checkIsConnected())
-//        val offlineMessages = Collections.synchronizedList(mutableListOf<MutableMap<String, Any?>>())
-//        offlineMessages.add(mutableMapOf("topic" to "offline.topic", "message" to "offline", "resent" to false))
-//
-//
-//        r.offlineMessage(offlineMessages) // should not crash
-//    }
-//
-//    @Test
-//    fun `on and off functions properly`() = runTest {
-//        val topic = "test-topic"
-//        var called = false
-//
-//        realtime.on(topic) {
-//            called = true
-//        }
-//
-//        assertTrue(realtime.listenersList().containsKey(topic))
-//
-//        realtime.off(topic)
-//        assertFalse(realtime.listenersList().containsKey(topic))
-//    }
-//
-//    @Test
-//    fun `off returns false for unknown topic`() = runTest {
-//        val result = realtime.off("unknown-topic")
-//        assertFalse(result)
-//    }
-//
-//    @Test
-//    fun `publish rejects reserved topics`() = runTest {
-//        val reserved = listOf("CONNECTED", "RECONNECT", "DISCONNECTED", "MESSAGE_RESEND")
-//
-//        for (topic in reserved) {
-//            assertThrows(IllegalArgumentException::class.java) {
-//                runBlocking {
-//                    realtime.publish(topic, mapOf("msg" to "bad"))
-//                }
-//            }
-//        }
-//    }
-//
-//    fun assertThrowsOnPublish(topic: String, message: Any) {
-//        assertThrows(IllegalArgumentException::class.java) {
-//            runBlocking {
-//                realtime.publish(topic, message)
-//            }
-//        }
-//    }
-//
-//    @Test
-//    fun `publish throws on invalid message`() {
-//        assertThrowsOnPublish("valid", "")
-//        assertThrowsOnPublish("valid", 1.2)
-//    }
-//
-//
-//    @Test
-//    fun `publish validates topic and message`() = runTest {
-//        val invalidTopics = listOf("", " ", "*invalid*", "in valid")
-//
-//        for (topic in invalidTopics) {
-//            assertThrows(IllegalArgumentException::class.java) {
-//                runBlocking {
-//                    realtime.publish(topic, "data")
-//                }
-//            }
-//        }
-//
-//        assertThrows(IllegalArgumentException::class.java) {
-//            runBlocking {
-//                realtime.publish("valid", listOf(1, 2, 3)) // Invalid message type
-//            }
-//        }
-//
-//        val resultEmpty = realtime.publish("valid", "")
-//        assertTrue("Invalid message should be published", resultEmpty)
-//
-//        val result = realtime.publish("valid", mapOf("key" to "value"))
-//        assertTrue("Valid message should be published", result)
-//
-//    }
-//
-//    @Test
-//    fun `history rejects invalid arguments`() = runTest {
-//        val now = System.currentTimeMillis()
-//
-//        assertThrows(IllegalArgumentException::class.java) {
-//            runBlocking {
-//                realtime.history("", now, null)
-//            }
-//        }
-//
-//        assertThrows(IllegalArgumentException::class.java) {
-//            runBlocking {
-//                realtime.history("topic", now, now - 1000)
-//            }
-//        }
-//
-//        assertThrows(IllegalArgumentException::class.java) {
-//            runBlocking {
-//                realtime.history("topic", now, null)
-//            }
-//        }
-//    }
-//
-//    @Test
-//    fun `flush latency log executes correctly`() = runTest {
-//        realtime.flushLatencyLogPublic(force = true)
-//    }
-//
-//    @Test
-//    fun `resend offline messages triggers MESSAGE_RESEND`() = runTest {
-//        var triggered = false
-//
-//        val field = Realtime::class.java.getDeclaredField("sdkListeners")
-//        field.isAccessible = true
-//        val listeners = field.get(realtime) as ConcurrentHashMap<String, (Any) -> Unit>
-//        listeners["MESSAGE_RESEND"] = { triggered = true }
-//
-//        runBlocking {
-//            val offlineMessages = Collections.synchronizedList(mutableListOf<MutableMap<String, Any?>>())
-//            offlineMessages.add(mutableMapOf("topic" to "offline.topic", "message" to "offline", "resent" to false))
-//
-//
-//            realtime.offlineMessage(offlineMessages)
-//        }
-//
-//        assertTrue(triggered)
-//    }
-//
-//    @Test
-//    fun `multiple on calls do not re-subscribe`() = runTest {
-//        val topic = "dedupe-topic"
-//        val listener: (JSONObject) -> Unit = {}
-//
-//        realtime.on(topic, listener)
-//        realtime.on(topic, listener)
-//        realtime.on(topic, listener)
-//
-//        assertEquals(1, realtime.listenersList().count { it.key == topic })
-//    }
+    @Test
+    fun `Publish Test (Valid inputs & online)`() = runTest {
+        val unreservedValidTopics = mutableListOf(
+            "foo",
+            "foo.bar",
+            "foo.bar.baz",
+            "*",
+            "foo.*",
+            "*.bar",
+            "foo.*.baz",
+            ">",
+            "foo.>",
+            "foo.bar.>",
+            "*.*.>",
+            "alpha_beta",
+            "alpha-beta",
+            "alpha~beta",
+            "abc123",
+            "123abc",
+            "~",
+            "alpha.*.>",
+            "alpha.*",
+            "alpha.*.*",
+            "-foo",
+            "foo_bar-baz~qux",
+            "A.B.C",
+            "sensor.temperature",
+            "metric.cpu.load",
+            "foo.*.*",
+            "foo.*.>",
+            "foo_bar.*",
+            "*.*",
+            "metrics.>"
+        )
+
+        runBlocking {
+            realtimeEnabled = Realtime(
+                context = context,
+                apiKey = apiKey,
+                secretKey = secretKey,
+                callbackDispatcher = Dispatchers.Unconfined
+            )
+            realtimeEnabled.init(staging = staging, opts = mapOf("debug" to true))
+            realtimeEnabled.connect()
+
+            delay(5000)
+
+            for (topic in unreservedValidTopics) {
+                var sent = realtimeEnabled.publish(topic, mapOf("data" to "Hello World!"))
+
+                assertTrue(sent)
+
+                sent = realtimeEnabled.publish(topic, "HEY!")
+                assertTrue(sent)
+
+                sent = realtimeEnabled.publish(topic, 1234)
+                assertTrue(sent)
+
+                sent = realtimeEnabled.publish(topic, 12.34)
+                assertTrue(sent)
+            }
+
+            realtimeEnabled.close()
+
+        }
+    }
+
+    @Test
+    fun `Publish Test Invalid Inputs`() = runTest {
+        val unreservedInvalidTopics = mutableListOf(
+            "\$foo",
+            "foo$",
+            "foo.$.bar",
+            "foo..bar",
+            ".foo",
+            "foo.",
+            "foo.>.bar",
+            ">foo",
+            "foo>bar",
+            "foo.>bar",
+            "foo.bar.>.",
+            "foo bar",
+            "foo/bar",
+            "foo#bar",
+            "",
+            " ",
+            "..",
+            ".>",
+            "foo..",
+            ".",
+            ">.",
+            "foo,baz",
+            "αbeta",
+            "foo|bar",
+            "foo;bar",
+            "foo:bar",
+            "foo%bar",
+            "foo.*.>.bar",
+            "foo.*.>.",
+            "foo.*..bar",
+            "foo.>.bar",
+            "foo>"
+        )
+
+        for(topic in unreservedInvalidTopics){
+            val exception = assertThrows(IllegalArgumentException::class.java) {
+                runBlocking {
+                    val realtime = Realtime(context = context, apiKey = "<KEY>", secretKey = "<KEY>")
+
+                    realtime.publish(topic, "hey")
+                }
+            }
+            assertEquals("Invalid topic", exception.message)
+        }
+
+        val invalidMessages = mutableListOf(
+            true,                           // Boolean
+            listOf(1, 2, 3),                // List
+            arrayOf("a", "b"),              // Array
+            setOf(1.0, 2.0),                // Set
+            Pair(1, "two"),                 // Pair / Tuple
+            ByteArray(4),                   // Byte array (raw binary)
+            Unit,                           // Kotlin Unit object
+            object { val x = 1 },           // Anonymous object
+            IllegalStateException("boom"),  // Throwable / arbitrary class
+        )
+
+        for(message in invalidMessages){
+            val exception = assertThrows(Exception::class.java) {
+                runBlocking {
+                    val realtime = Realtime(context = context, apiKey = "<KEY>", secretKey = "<KEY>")
+
+                    println(message)
+                    realtime.publish("topic", message!!)
+                }
+            }
+            assertEquals("Message must be string, number or Map<String, String | Number | Map>", exception.message)
+        }
+    }
+
+    @Test
+    fun `Publish Offline Mode`() = runTest {
+        runBlocking {
+            val realtime = Realtime(context = context, apiKey = "<KEY>", secretKey = "<KEY>")
+
+            var sent = realtime.publish("topic", "Hey what's up?")
+            assertFalse(sent)
+        }
+    }
+
+    @Test
+    fun `on() Valid Test`() = runTest {
+        val reserved = listOf("CONNECTED", "RECONNECT", "DISCONNECTED", "MESSAGE_RESEND")
+        val unreservedValidTopics = mutableListOf(
+            "foo",
+            "foo.bar",
+            "foo.bar.baz",
+            "*",
+            "foo.*",
+            "*.bar",
+            "foo.*.baz",
+            ">",
+            "foo.>",
+            "foo.bar.>",
+            "*.*.>",
+            "alpha_beta",
+            "alpha-beta",
+            "alpha~beta",
+            "abc123",
+            "123abc",
+            "~",
+            "alpha.*.>",
+            "alpha.*",
+            "alpha.*.*",
+            "-foo",
+            "foo_bar-baz~qux",
+            "A.B.C",
+            "sensor.temperature",
+            "metric.cpu.load",
+            "foo.*.*",
+            "foo.*.>",
+            "foo_bar.*",
+            "*.*",
+            "metrics.>"
+        )
+
+        runBlocking {
+            val realtime = Realtime(context = context, apiKey = "<KEY>", secretKey = "<KEY>")
+
+            for(topic in reserved){
+                var init = realtime.on(topic, {})
+                assertTrue(init)
+            }
+
+            // Running it again but now it should be false since the topics are already initialized
+            for(topic in reserved){
+                var init = realtime.on(topic, {})
+                assertFalse(init)
+            }
+
+            for(topic in unreservedValidTopics){
+                var init = realtime.on(topic, {})
+                assertTrue(init)
+            }
+
+            // Running it again but now it should be false since the topics are already initialized
+            for(topic in unreservedValidTopics){
+                var init = realtime.on(topic, {})
+                assertFalse(init)
+            }
+        }
+    }
+
+    @Test
+    fun `on() Invalid Test`() = runTest {
+        val unreservedInvalidTopics = mutableListOf(
+            "\$foo",
+            "foo$",
+            "foo.$.bar",
+            "foo..bar",
+            ".foo",
+            "foo.",
+            "foo.>.bar",
+            ">foo",
+            "foo>bar",
+            "foo.>bar",
+            "foo.bar.>.",
+            "foo bar",
+            "foo/bar",
+            "foo#bar",
+            "",
+            " ",
+            "..",
+            ".>",
+            "foo..",
+            ".",
+            ">.",
+            "foo,baz",
+            "αbeta",
+            "foo|bar",
+            "foo;bar",
+            "foo:bar",
+            "foo%bar",
+            "foo.*.>.bar",
+            "foo.*.>.",
+            "foo.*..bar",
+            "foo.>.bar",
+            "foo>"
+        )
+
+        runBlocking {
+            val realtime = Realtime(context = context, apiKey = "<KEY>", secretKey = "<KEY>")
+
+            for(topic in unreservedInvalidTopics){
+                val exception = assertThrows(IllegalArgumentException::class.java) {
+                    runBlocking {
+                        realtime.on(topic, {})
+                    }
+                }
+                assertEquals("Invalid topic", exception.message)
+            }
+        }
+    }
+
+    @Test
+    fun `off() Valid Test`() = runTest {
+        val unreservedValidTopics = mutableListOf(
+            "foo",
+            "foo.bar",
+            "foo.bar.baz",
+            "*",
+            "foo.*",
+            "*.bar",
+            "foo.*.baz",
+            ">",
+            "foo.>",
+            "foo.bar.>",
+            "*.*.>",
+            "alpha_beta",
+            "alpha-beta",
+            "alpha~beta",
+            "abc123",
+            "123abc",
+            "~",
+            "alpha.*.>",
+            "alpha.*",
+            "alpha.*.*",
+            "-foo",
+            "foo_bar-baz~qux",
+            "A.B.C",
+            "sensor.temperature",
+            "metric.cpu.load",
+            "foo.*.*",
+            "foo.*.>",
+            "foo_bar.*",
+            "*.*",
+            "metrics.>"
+        )
+
+        runBlocking {
+            val realtime = Realtime(context = context, apiKey = "<KEY>", secretKey = "<KEY>")
+
+            for(topic in unreservedValidTopics){
+                realtime.off(topic)
+            }
+
+            var init = realtime.on(Realtime.CONNECTED, {})
+            assertTrue(init)
+
+            var off = realtime.off(Realtime.CONNECTED)
+            assertTrue(off)
+        }
+    }
+
+    @Test
+    fun `off() Invalid Test`() = runTest {
+        val unreservedValidTopics = mutableListOf(
+            "\$foo",
+            "foo$",
+            "foo.$.bar",
+            "foo..bar",
+            ".foo",
+            "foo.",
+            "foo.>.bar",
+            ">foo",
+            "foo>bar",
+            "foo.>bar",
+            "foo.bar.>.",
+            "foo bar",
+            "foo/bar",
+            "foo#bar",
+            "",
+            " ",
+            "..",
+            ".>",
+            "foo..",
+            ".",
+            ">.",
+            "foo,baz",
+            "αbeta",
+            "foo|bar",
+            "foo;bar",
+            "foo:bar",
+            "foo%bar",
+            "foo.*.>.bar",
+            "foo.*.>.",
+            "foo.*..bar",
+            "foo.>.bar",
+            "foo>"
+        )
+
+        runBlocking {
+            val realtime = Realtime(context = context, apiKey = "<KEY>", secretKey = "<KEY>")
+
+            for(topic in unreservedValidTopics){
+                val exception = assertThrows(IllegalArgumentException::class.java) {
+                    realtime.off(topic)
+                }
+                assertEquals("Invalid topic", exception.message)
+            }
+        }
+    }
 
     @Test
     fun `Topic Validator`() = runTest {
+        val realtime = Realtime(context, apiKey, secretKey)
+
         val unreservedInvalidTopics = mutableListOf(
             "\$foo",
             "foo$",
@@ -307,7 +529,7 @@ class RealtimeTest {
 
         for (topic in unreservedInvalidTopics) {
             val err = assertThrows(IllegalArgumentException::class.java) {
-                realtimeEnabled.isTopicValid(topic)
+                realtime.isTopicValid(topic)
             }
 
             assertEquals("Invalid topic", err.message)
@@ -348,12 +570,14 @@ class RealtimeTest {
 
         for (topic in unreservedValidTopics) {
             println(topic)
-            realtimeEnabled.isTopicValid(topic)
+            realtime.isTopicValid(topic)
         }
     }
 
     @Test
     fun `Pattern Matcher Test`() = runTest {
+        val realtime = Realtime(context, apiKey, secretKey)
+
         val cases: List<Triple<String, String, Boolean>> = listOf(
             Triple("foo",                 "foo",                      true),   // 1
             Triple("foo",                 "bar",                      false),  // 2
@@ -410,7 +634,7 @@ class RealtimeTest {
         cases.forEachIndexed { index, (tokenA, tokenB, expected) ->
             println("$tokenA  ⇆  $tokenB  → $expected")
 
-            val result = realtimeEnabled.topicPatternMatcher(tokenA, tokenB)
+            val result = realtime.topicPatternMatcher(tokenA, tokenB)
 
             assertEquals(expected, result)
         }
