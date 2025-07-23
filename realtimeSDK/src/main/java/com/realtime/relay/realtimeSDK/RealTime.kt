@@ -186,7 +186,7 @@ private val callbackDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate
 
         // Use actual routable host instead of 0.0.0.0
         for (port in 4221..4223) {
-            val host = if (staging) "nats://staging.relay-x.io:$port" else "tls://api2.relay-x.io:$port"
+            val host = if (staging) "nats://staging.relay-x.io:$port" else "tls://api.relay-x.io:$port"
             builder.server(host)
         }
 
