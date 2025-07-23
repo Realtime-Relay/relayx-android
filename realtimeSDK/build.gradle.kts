@@ -1,22 +1,21 @@
+import org.gradle.api.publish.maven.MavenPublication
+
 plugins {
-    alias(libs.plugins.android.application)
+    alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
 
     id("maven-publish")
 }
 
 android {
-    namespace = "com.relay.realtime"
+    namespace = "com.realtime.relay"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.relay.realtime"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        consumerProguardFiles("consumer-rules.pro")
     }
 
     buildTypes {
@@ -35,12 +34,6 @@ android {
     kotlinOptions {
         jvmTarget = "11"
     }
-
-    testOptions {
-        unitTests {
-            isReturnDefaultValues = true
-        }
-    }
 }
 
 dependencies {
@@ -48,9 +41,6 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
-    implementation(libs.androidx.activity)
-    implementation(libs.androidx.constraintlayout)
-    implementation(libs.androidx.junit.ktx)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -66,8 +56,6 @@ dependencies {
 
     implementation("com.google.code.gson:gson:2.10.1")
 
-    implementation(project(":realtimeSDK"))
-
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.mockito:mockito-core:5.11.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
@@ -75,6 +63,17 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.12.1") // if needed
 
     testImplementation(kotlin("test"))
+}
 
-
+afterEvaluate {
+    publishing {
+        publications {
+            create<MavenPublication>("release") {
+                from(components["release"])
+                groupId = "com.realtime.relay"
+                artifactId = "realyx-android"
+                version = "1.0.0"
+            }
+        }
+    }
 }
