@@ -1,6 +1,10 @@
+import org.gradle.api.publish.maven.MavenPublication
+
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+
+    id("maven-publish")
 }
 
 android {
@@ -59,4 +63,17 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.12.1") // if needed
 
     testImplementation(kotlin("test"))
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            create<MavenPublication>("release") {
+                from(components["release"])
+                groupId = "com.realtime.relay"
+                artifactId = "realyx-android"
+                version = "1.0.0"
+            }
+        }
+    }
 }
