@@ -489,6 +489,41 @@ class RealtimeTest {
     }
 
     @Test
+    fun `History Test`() = runTest {
+        runBlocking {
+            realtimeEnabled = Realtime(
+                context = context,
+                apiKey = apiKey,
+                secretKey = secretKey,
+                callbackDispatcher = Dispatchers.Unconfined
+            )
+            realtimeEnabled.init(staging = staging, opts = mapOf("debug" to true))
+
+            val since = System.currentTimeMillis() - 5 * 60 * 60 * 1_000
+            val end = System.currentTimeMillis()
+            var result = realtimeEnabled.history("hello", since, end)
+
+            assertTrue(result.size == 0)
+
+            var exception = assertThrows(Exception::class.java) {
+                runBlocking {
+                    realtimeEnabled.history("hello", end, since)
+                }
+            }
+            assertEquals("End date <= start date", exception.message)
+
+            realtimeEnabled.connect()
+
+            // Delay so that the connection takes place & getNamespace() is called
+            delay(5000)
+
+            assertTrue(realtimeEnabled.checkIsConnected())
+
+            realtimeEnabled.close()
+        }
+    }
+
+    @Test
     fun `Topic Validator`() = runTest {
         val realtime = Realtime(context, apiKey, secretKey)
 
