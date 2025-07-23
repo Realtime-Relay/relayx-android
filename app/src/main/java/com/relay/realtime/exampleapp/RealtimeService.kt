@@ -1,4 +1,4 @@
-package com.relay.realtime
+package com.relay.realtime.exampleapp
 
 import android.app.Service
 import android.content.Intent
@@ -10,7 +10,6 @@ import com.google.gson.JsonObject
 import com.relay.realtime.realtimeSDK.Realtime
 import com.relay.realtime.realtimeSDK.Utils
 import kotlinx.coroutines.*
-import org.json.JSONObject
 
 class RealtimeService : Service(), CoroutineScope by CoroutineScope(SupervisorJob() + Dispatchers.IO) {
 
