@@ -663,14 +663,14 @@ private val callbackDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate
         require(spaceStarCheck && topicNotNull) { "Invalid topic" }
     }
 
-    fun isTopicValid(topic: String) {
+    fun isTopicValid(topic: String) : Boolean {
         val topicNotNull = !topic.isBlank()
 
         val topicRegex = Regex("^(?!.*\\\$)(?:[A-Za-z0-9_*~-]+(?:\\.[A-Za-z0-9_*~-]+)*(?:\\.>)?|>)\$")
 
         val spaceStarCheck = !topic.contains(" ") && topicRegex.matches(topic) && !reservedTopics.contains(topic)
 
-        require(spaceStarCheck && topicNotNull) { "Invalid topic" }
+        return spaceStarCheck && topicNotNull
     }
 
     private fun validateMessage(msg: Any) {
