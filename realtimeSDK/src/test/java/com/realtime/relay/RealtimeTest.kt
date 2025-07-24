@@ -569,11 +569,9 @@ class RealtimeTest {
         )
 
         for (topic in unreservedInvalidTopics) {
-            val err = Assert.assertThrows(IllegalArgumentException::class.java) {
-                realtime.isTopicValid(topic)
-            }
+            val valid = realtime.isTopicValid(topic)
 
-            Assert.assertEquals("Invalid topic", err.message)
+            Assert.assertFalse(valid)
         }
 
         val unreservedValidTopics = mutableListOf(
@@ -610,8 +608,9 @@ class RealtimeTest {
         )
 
         for (topic in unreservedValidTopics) {
-            println(topic)
-            realtime.isTopicValid(topic)
+            val valid = realtime.isTopicValid(topic)
+
+            Assert.assertTrue(valid)
         }
     }
 
