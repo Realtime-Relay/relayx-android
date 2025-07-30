@@ -41,8 +41,6 @@ class RealtimeService : Service(), CoroutineScope by CoroutineScope(SupervisorJo
             realtime.on(Realtime.DISCONNECTED) { listener?.onSdkEvent(Realtime.DISCONNECTED, it) }
             realtime.on(Realtime.RECONNECT) { listener?.onSdkEvent(Realtime.RECONNECT, it) }
             realtime.on(Realtime.MESSAGE_RESEND) { listener?.onSdkEvent(Realtime.MESSAGE_RESEND, it) }
-
-            realtime.on("hello.>") { payload -> listener?.onMessage("hello.>", payload) }
         }
     }
 
@@ -55,7 +53,9 @@ class RealtimeService : Service(), CoroutineScope by CoroutineScope(SupervisorJo
     fun disconnect() = launch { realtime.close() }
 
     fun subscribe(topic: String) = launch {
-        realtime.on(topic) { payload -> listener?.onMessage(topic, payload) }
+        realtime.on(topic) { payload -> {
+            listener?.onMessage(topic, payload)
+        } }
     }
 
     fun unsubscribe(topic: String) { realtime.off(topic) }
@@ -63,6 +63,13 @@ class RealtimeService : Service(), CoroutineScope by CoroutineScope(SupervisorJo
     fun publish(topic: String, message: String, cb: (Boolean) -> Unit = {}) = launch {
         val ok = realtime.publish(topic, message)
         withContext(Dispatchers.Main) { cb(ok) }
+
+        val m5 = buildMap<String, Any> {
+            put("topic", topic)
+            put("message", message)
+            put("resent", false)
+            // if (extra != null) put("extra", extra)
+        }
     }
 
     fun history(topic: String, start: Long, end: Long, cb: (String) -> Unit) = launch {
