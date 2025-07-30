@@ -72,7 +72,7 @@ afterEvaluate {
                 from(components["release"])
                 groupId = "com.realtime.relay"
                 artifactId = "realyx-android"
-                version = "1.0.2"
+                version = "1.0.3"
             }
         }
     }
