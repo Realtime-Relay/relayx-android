@@ -439,7 +439,7 @@ private val callbackDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate
                                 listeners[topic]?.invoke(JsonObject().apply {
                                     addProperty("id", unpacked.id)
                                     addProperty("topic", msgTopic)
-                                    add("message", Gson().toJsonTree(unpacked.message))
+                                    add("data", Gson().toJsonTree(unpacked.message))
                                 })
                             }
                         }
